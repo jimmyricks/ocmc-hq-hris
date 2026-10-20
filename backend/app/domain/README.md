@@ -20,7 +20,6 @@ domain/
     ├── entity_repository.py
     ├── event_bus.py
     ├── fetch_from_repository.py
-    ├── metadata_sync.py
     ├── naming_repository.py
     ├── print_assembler.py
     ├── rbac_protocol.py

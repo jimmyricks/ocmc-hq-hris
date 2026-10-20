@@ -5,11 +5,64 @@ Workflow and RBAC are now database-driven, not loaded from JSON.
 """
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 from app.meta.registry import MetaRegistry, EntityMeta, FormStateRules, TabConfig, WorkflowMeta, AttachmentConfig, ChildTableMeta, ListViewActionMeta, SectionMeta
+from app.meta.model_introspection import build_table_entity_map, derive_fields
 
 
-def _load_entities_from_directory(entities_dir: Path, module_name: str, po_entities: list, po_enabled: bool) -> tuple[int, int]:
+def _iter_entity_json_files() -> Iterator[tuple[Path, str]]:
+    """Yield ``(json_path, module_name)`` for every entity JSON.
+
+    Core framework entities come first (module ``core``), then module
+    entities under ``app/modules/<module>/entities``. Supports both the flat
+    ``entities/{entity}.json`` and legacy nested
+    ``entities/{entity}/{entity}.json`` layouts.
+    """
+    core_entities_dir = Path(__file__).parent.parent / "core" / "framework" / "entities"
+    if core_entities_dir.exists():
+        yield from _iter_entity_dir(core_entities_dir, "core")
+
+    modules_dir = Path(__file__).parent.parent / "modules"
+    if modules_dir.exists():
+        for module_dir in modules_dir.iterdir():
+            if not module_dir.is_dir() or module_dir.name.startswith("_"):
+                continue
+            entities_dir = module_dir / "entities"
+            if entities_dir.exists():
+                yield from _iter_entity_dir(entities_dir, module_dir.name)
+
+
+def _iter_entity_dir(entities_dir: Path, module_name: str) -> Iterator[tuple[Path, str]]:
+    for item in entities_dir.iterdir():
+        if item.name.startswith("_"):
+            continue
+        if item.is_file() and item.suffix == ".json":
+            yield item, module_name
+        elif item.is_dir():
+            nested_json = item / f"{item.name}.json"
+            if nested_json.exists():
+                yield nested_json, module_name
+
+
+def _collect_table_entity_map() -> dict[str, str]:
+    """First pass: collect ``name``/``table_name`` from every entity JSON."""
+    defs = []
+    for json_path, _ in _iter_entity_json_files():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        defs.append({"name": data.get("name"), "table_name": data.get("table_name")})
+    return build_table_entity_map(defs)
+
+
+def _load_entities_from_directory(
+    entities_dir: Path,
+    module_name: str,
+    po_entities: list,
+    po_enabled: bool,
+    table_to_entity: dict[str, str],
+) -> tuple[int, int]:
     """Load entities from a directory, returning (count, skipped_po)."""
     entity_count = 0
     skipped_po = 0
@@ -31,7 +84,7 @@ def _load_entities_from_directory(entities_dir: Path, module_name: str, po_entit
 
         if json_file and json_file.exists():
             try:
-                entity_meta = load_entity_from_json(json_file, module_name)
+                entity_meta = load_entity_from_json(json_file, module_name, table_to_entity)
                 if entity_meta:
                     # Skip PO entities when feature is disabled
                     if not po_enabled and entity_meta.name in po_entities:
@@ -79,10 +132,15 @@ def load_all_entities():
     entity_count = 0
     skipped_po = 0
 
+    # First pass: build table_name -> entity_name map for FK link resolution.
+    table_to_entity = _collect_table_entity_map()
+
     # 1. Load core framework entities first
     core_entities_dir = Path(__file__).parent.parent / "core" / "framework" / "entities"
     if core_entities_dir.exists():
-        count, _ = _load_entities_from_directory(core_entities_dir, "core", PO_ENTITIES, is_po_enabled())
+        count, _ = _load_entities_from_directory(
+            core_entities_dir, "core", PO_ENTITIES, is_po_enabled(), table_to_entity
+        )
         entity_count += count
 
     # 2. Load module entities
@@ -96,7 +154,9 @@ def load_all_entities():
             if not entities_dir.exists():
                 continue
 
-            count, skipped = _load_entities_from_directory(entities_dir, module_dir.name, PO_ENTITIES, is_po_enabled())
+            count, skipped = _load_entities_from_directory(
+                entities_dir, module_dir.name, PO_ENTITIES, is_po_enabled(), table_to_entity
+            )
             entity_count += count
             skipped_po += skipped
 
@@ -111,83 +171,75 @@ def load_all_entities():
     _register_entity_actions()
 
 
-def load_entity_from_json(json_path: Path, module_name: Optional[str] = None) -> Optional[EntityMeta]:
-    """Load entity metadata from JSON file."""
+def _parse_static_options(raw_options):
+    if raw_options is None:
+        return None
+
+    # Frappe-style options are often stored as a newline-delimited string.
+    if isinstance(raw_options, str):
+        values = [v.strip() for v in raw_options.split("\n")]
+        values = [v for v in values if v]
+        return [{"value": v, "label": v} for v in values]
+
+    # Allow list[str] or list[dict]
+    if isinstance(raw_options, list):
+        if not raw_options:
+            return []
+        if all(isinstance(v, str) for v in raw_options):
+            return [{"value": v, "label": v} for v in raw_options]
+        if all(isinstance(v, dict) for v in raw_options):
+            normalized = []
+            for item in raw_options:
+                value = item.get("value") if isinstance(item, dict) else None
+                label = item.get("label") if isinstance(item, dict) else None
+                if value is None and label is not None:
+                    value = label
+                if label is None and value is not None:
+                    label = str(value)
+                if value is None:
+                    continue
+                normalized.append({"value": value, "label": label or str(value)})
+            return normalized
+
+    return None
+
+
+def load_entity_from_json(
+    json_path: Path,
+    module_name: Optional[str] = None,
+    table_to_entity: Optional[dict[str, str]] = None,
+) -> Optional[EntityMeta]:
+    """Load entity metadata from JSON file.
+
+    The ``fields`` list in JSON is a UI/behaviour declaration: field order,
+    labels, options and list-view flags are kept, while schema attributes
+    (type, nullability, uniqueness, link target) are derived from the
+    SQLAlchemy model. Fields that do not map to a model column are dropped
+    with a warning.
+    """
     try:
         with open(json_path, 'r') as f:
             data = json.load(f)
 
-        # Parse fields
-        from app.meta.registry import FieldMeta, NamingMeta, ActionMeta
+        from app.meta.registry import NamingMeta, ActionMeta
 
-        def _parse_static_options(raw_options):
-            if raw_options is None:
-                return None
+        if table_to_entity is None:
+            table_to_entity = _collect_table_entity_map()
 
-            # Frappe-style options are often stored as a newline-delimited string.
-            if isinstance(raw_options, str):
-                values = [v.strip() for v in raw_options.split("\n")]
-                values = [v for v in values if v]
-                return [{"value": v, "label": v} for v in values]
+        json_fields = data.get('fields', [])
+        for field_data in json_fields:
+            if isinstance(field_data, dict) and "options" in field_data:
+                field_data["options"] = _parse_static_options(field_data.get("options"))
 
-            # Allow list[str] or list[dict]
-            if isinstance(raw_options, list):
-                if not raw_options:
-                    return []
-                if all(isinstance(v, str) for v in raw_options):
-                    return [{"value": v, "label": v} for v in raw_options]
-                if all(isinstance(v, dict) for v in raw_options):
-                    normalized = []
-                    for item in raw_options:
-                        value = item.get("value") if isinstance(item, dict) else None
-                        label = item.get("label") if isinstance(item, dict) else None
-                        if value is None and label is not None:
-                            value = label
-                        if label is None and value is not None:
-                            label = str(value)
-                        if value is None:
-                            continue
-                        normalized.append({"value": value, "label": label or str(value)})
-                    return normalized
-
-            return None
-
-        fields = []
-        for field_data in data.get('fields', []):
-            fields.append(FieldMeta(
-                name=field_data['name'],
-                label=field_data.get('label', field_data['name']),
-                field_type=field_data.get('field_type', 'string'),
-                required=field_data.get('required', False),
-                readonly=field_data.get('readonly', False),
-                hidden=field_data.get('hidden', False),
-                unique=field_data.get('unique', False),
-                nullable=field_data.get('nullable', True),
-                in_list_view=field_data.get('in_list_view', False),
-                link_entity=field_data.get('link_entity'),
-                child_entity=field_data.get('child_entity'),
-                parent_entity=field_data.get('parent_entity'),
-                child_parent_fk_field=field_data.get('child_parent_fk_field'),
-                query=field_data.get('query'),
-                default=field_data.get('default'),
-                options=_parse_static_options(field_data.get('options')),
-                show_when=field_data.get('show_when'),
-                editable_when=field_data.get('editable_when'),
-                required_when=field_data.get('required_when'),
-                display_depends_on=field_data.get('display_depends_on'),
-                mandatory_depends_on=field_data.get('mandatory_depends_on'),
-                fetch_from=field_data.get('fetch_from'),
-                filter_by=field_data.get('filter_by'),
-                column_group=field_data.get('column_group'),
-                list_view_depends_on=field_data.get('list_view_depends_on'),
-                copy_from_parent=field_data.get('copy_from_parent'),
-                readonly_depends_on=field_data.get('readonly_depends_on'),
-                in_options_description=field_data.get('in_options_description', False),
-                placeholder=field_data.get('placeholder'),
-                description=field_data.get('description'),
-                computed_from=field_data.get('computed_from'),
-                link_filter=field_data.get('link_filter'),
-            ))
+        entity_name = data.get('name', '')
+        fields, field_warnings = derive_fields(
+            entity_name,
+            data.get('table_name', entity_name),
+            json_fields,
+            table_to_entity,
+        )
+        for warning in field_warnings:
+            print(f"⚠️  {warning}")
 
         # Parse naming
         naming = None
@@ -347,6 +399,38 @@ def load_entity_from_json(json_path: Path, module_name: Optional[str] = None) ->
 def _strip_po_references():
     """No-op in the barebones backend."""
     pass
+
+
+def reload_entity_meta(entity_name: str, json_path: Path | str) -> bool:
+    """Re-load a single entity's JSON and rebuild its Pydantic schemas.
+
+    Used after hand-editing an entity JSON in development (uvicorn reload
+    does not watch ``.json`` files).
+    """
+    from app.meta.schema_cache import load_or_build_schemas
+
+    entity_json_path = Path(json_path)
+    entity_meta = load_entity_from_json(entity_json_path)
+    if not entity_meta:
+        return False
+    MetaRegistry.register(entity_meta)
+    write_schema, update_schema, read_schema = load_or_build_schemas(
+        entity_meta, entity_json_path
+    )
+    MetaRegistry.register_schema(
+        entity_meta.name,
+        write=write_schema,
+        update=update_schema,
+        read=read_schema,
+    )
+    return True
+
+
+def reload_all_entities() -> int:
+    """Clear and re-load every entity JSON; returns the entity count."""
+    MetaRegistry._entities.clear()
+    load_all_entities()
+    return len(MetaRegistry._entities)
 
 
 def _register_entity_actions():

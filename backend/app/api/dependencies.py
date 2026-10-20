@@ -270,35 +270,6 @@ def get_scheduler_service(scheduler_adapter = Depends(get_scheduler_adapter)):
 
 
 # ---------------------------------------------------------------------------
-# Metadata Sync service factory
-# ---------------------------------------------------------------------------
-
-def get_metadata_sync_service():
-    """Factory for MetadataSyncService with all infrastructure adapters wired."""
-    from app.infrastructure.metadata.adapters import (
-        JsonMetadataReader,
-        JsonMetadataWriter,
-        MetadataValidator,
-        MetadataChangeAnalyzer,
-        ModelGeneratorAdapter,
-        MigrationManagerAdapter,
-        RegistryManagerAdapter,
-    )
-    from app.application.services.integrations.metadata_sync_service import MetadataSyncService
-
-    reader = JsonMetadataReader()
-    return MetadataSyncService(
-        reader=reader,
-        writer=JsonMetadataWriter(reader),
-        validator=MetadataValidator(),
-        analyzer=MetadataChangeAnalyzer(reader),
-        model_generator=ModelGeneratorAdapter(),
-        migration_manager=MigrationManagerAdapter(),
-        registry_manager=RegistryManagerAdapter(),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Legacy service factories (for gradual migration of routes to Depends())
 # ---------------------------------------------------------------------------
 

@@ -11,7 +11,7 @@
     {
       "name": "invoice_number",
       "label": "Invoice Number",
-      "field_type": "str",
+      "field_type": "string",
       "required": true,
       "in_list_view": true
     },

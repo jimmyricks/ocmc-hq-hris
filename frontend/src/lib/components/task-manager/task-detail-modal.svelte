@@ -1,6 +1,6 @@
 <script lang="ts">
   import { browser } from "$app/environment";
-  import { toast } from "svelte-sonner";
+  import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import { refCache } from "$lib/task-manager/ref-cache.js";
   import type {
@@ -28,27 +28,25 @@
     taskState,
   } from "$lib/task-manager/utils.js";
 
-  import * as Card from "$lib/components/ui/card/index.js";
-  import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import * as Field from "$lib/components/ui/field/index.js";
-  import * as InputGroup from "$lib/components/ui/input-group/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
-  import * as Popover from "$lib/components/ui/popover/index.js";
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
-  import { Avatar, AvatarFallback } from "$lib/components/ui/avatar/index.js";
-  import * as Empty from "$lib/components/ui/empty/index.js";
-  import * as Item from "$lib/components/ui/item/index.js";
-  import { ScrollAreaScrollbar } from "$lib/components/ui/scroll-area/index.js";
-  import { ScrollArea as ScrollAreaPrimitive } from "bits-ui";
-  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
-  import CalendarPicker from "$lib/components/ui/calendar/calendar.svelte";
-  import { parseDate, type DateValue } from "@internationalized/date";
+  import * as Card from "$lib/components/native/card/index.js";
+  import * as Tabs from "$lib/components/native/tabs/index.js";
+  import * as Dialog from "$lib/components/native/dialog/index.js";
+  import * as Field from "$lib/components/native/field/index.js";
+  import * as InputGroup from "$lib/components/native/input-group/index.js";
+  import * as Select from "$lib/components/native/select/index.js";
+  import * as DropdownMenu from "$lib/components/native/dropdown-menu/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
+  import { Textarea } from "$lib/components/native/textarea/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import { Separator } from "$lib/components/native/separator/index.js";
+  import {
+    Avatar,
+    AvatarFallback,
+  } from "$lib/components/native/avatar/index.js";
+  import * as Empty from "$lib/components/native/empty/index.js";
+  import * as Item from "$lib/components/native/item/index.js";
+  import { Skeleton } from "$lib/components/native/skeleton/index.js";
   import { cn } from "$lib/utils.js";
 
   import PlayIcon from "@lucide/svelte/icons/play";
@@ -61,7 +59,6 @@
   import MessageSquareIcon from "@lucide/svelte/icons/message-square";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import ClipboardListIcon from "@lucide/svelte/icons/clipboard-list";
-  import CalendarIcon from "@lucide/svelte/icons/calendar";
   import SaveIcon from "@lucide/svelte/icons/save";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
@@ -126,8 +123,7 @@
   };
   let draft = $state<Task>({ ...emptyTask });
   let saving = $state(false);
-  let dateOpen = $state(false);
-  let calendarValue: DateValue[] = $state([]);
+  let dueDateInput = $state("");
 
   // Submit-work dialog
   let submitOpen = $state(false);
@@ -218,11 +214,7 @@
       comments = [];
       loading = false;
       error = "";
-      const datePart = newTask.due_date
-        ? newTask.due_date.split("T")[0]
-        : undefined;
-      const parsed = datePart ? parseDate(datePart) : undefined;
-      calendarValue = parsed ? [parsed] : [];
+      dueDateInput = newTask.due_date ? newTask.due_date.split("T")[0] : "";
     } else if (taskId) {
       load();
     }
@@ -266,9 +258,7 @@
       taskTypes = types ?? [];
       taskCategories = cats ?? [];
       project = projects.find((p) => p.id === t.project_id) ?? null;
-      const datePart = t.due_date ? t.due_date.split("T")[0] : undefined;
-      const parsed = datePart ? parseDate(datePart) : undefined;
-      calendarValue = parsed ? [parsed] : [];
+      dueDateInput = t.due_date ? t.due_date.split("T")[0] : "";
     } catch (err: any) {
       error = err.message || "Failed to load task";
     } finally {
@@ -292,12 +282,9 @@
       .toUpperCase();
   }
 
-  function onDateChange(v: DateValue[] | undefined) {
-    calendarValue = v ?? [];
-    const selected = calendarValue[0];
-    // Backend expects a full datetime; CalendarDate.toString() returns date-only ("2026-07-24").
-    draft.due_date = selected ? `${selected.toString()}T00:00:00` : undefined;
-    dateOpen = false;
+  function onDateChange(value: string) {
+    dueDateInput = value;
+    draft.due_date = value ? `${value}T00:00:00` : undefined;
   }
 
   async function handleSave() {
@@ -743,33 +730,12 @@
                 <!-- Due Date -->
                 <Field.Field class="gap-1">
                   <Field.Label for="task-due">Due Date</Field.Label>
-                  <Popover.Root bind:open={dateOpen}>
-                    <Popover.Trigger>
-                      {#snippet child({ props }: { props: any })}
-                        <Button
-                          {...props}
-                          id="task-due"
-                          variant="outline"
-                          class={cn(
-                            "w-full justify-start text-left font-normal h-9",
-                            !draft.due_date && "text-muted-foreground",
-                          )}
-                        >
-                          <CalendarIcon class="mr-2 size-4" />
-                          {draft.due_date
-                            ? draft.due_date.split("T")[0]
-                            : "Pick a date"}
-                        </Button>
-                      {/snippet}
-                    </Popover.Trigger>
-                    <Popover.Content class="w-auto p-0" align="start">
-                      <CalendarPicker
-                        type="multiple"
-                        value={calendarValue}
-                        onValueChange={onDateChange}
-                      />
-                    </Popover.Content>
-                  </Popover.Root>
+                  <Input
+                    id="task-due"
+                    type="date"
+                    bind:value={dueDateInput}
+                    oninput={(event) => onDateChange(event.currentTarget.value)}
+                  />
                 </Field.Field>
 
                 <!-- Assigned To -->
@@ -919,102 +885,96 @@
                     </Empty.Header>
                   </Empty.Root>
                 {:else}
-                  <ScrollAreaPrimitive.Root class="relative">
-                    <ScrollAreaPrimitive.Viewport
-                      class="max-h-[50vh] w-full focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
-                    >
-                      <Item.Group class="space-y-0 gap-2">
-                        {#each comments as comment (comment.id)}
-                          <Item.Root variant="outline">
-                            <Item.Media>
-                              <Avatar class="size-8">
-                                <AvatarFallback class="text-xs"
-                                  >{userInitials(
-                                    comment.author_id,
-                                  )}</AvatarFallback
-                                >
-                              </Avatar>
-                            </Item.Media>
-                            <Item.Content>
-                              <Item.Title class="flex items-center gap-1.5">
-                                {userName(comment.author_id)}
-                                {#if comment.author_id === currentUser?.id}
-                                  <span class="text-xs text-muted-foreground"
-                                    >(you)</span
-                                  >
-                                {/if}
-                                <span
-                                  class="ml-auto text-xs font-normal text-muted-foreground"
-                                >
-                                  • {timeAgo(comment.created_at)}
-                                </span>
-                              </Item.Title>
-                              {#if editingCommentId === comment.id}
-                                <Textarea
-                                  bind:value={editBody}
-                                  class="mt-1 min-h-[60px] resize-none"
-                                />
-                                <div class="mt-1 flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    onclick={() => saveEditComment(comment.id)}
-                                    disabled={!editBody.trim()}
-                                  >
-                                    Save
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onclick={cancelEditComment}>Cancel</Button
-                                  >
-                                </div>
-                              {:else}
-                                <Item.Description class="whitespace-pre-wrap"
-                                  >{comment.body}</Item.Description
+                  <div class="comment-scroll">
+                    <Item.Group class="space-y-0 gap-2">
+                      {#each comments as comment (comment.id)}
+                        <Item.Root variant="outline">
+                          <Item.Media>
+                            <Avatar class="size-8">
+                              <AvatarFallback class="text-xs"
+                                >{userInitials(
+                                  comment.author_id,
+                                )}</AvatarFallback
+                              >
+                            </Avatar>
+                          </Item.Media>
+                          <Item.Content>
+                            <Item.Title class="flex items-center gap-1.5">
+                              {userName(comment.author_id)}
+                              {#if comment.author_id === currentUser?.id}
+                                <span class="text-xs text-muted-foreground"
+                                  >(you)</span
                                 >
                               {/if}
-                            </Item.Content>
-                            {#if comment.author_id === currentUser?.id && editingCommentId !== comment.id}
-                              <Item.Actions>
-                                <DropdownMenu.DropdownMenu>
-                                  <DropdownMenu.DropdownMenuTrigger>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      aria-label="Comment options"
-                                    >
-                                      <EllipsisIcon class="size-4" />
-                                    </Button>
-                                  </DropdownMenu.DropdownMenuTrigger>
-                                  <DropdownMenu.DropdownMenuContent align="end">
-                                    <DropdownMenu.DropdownMenuItem
-                                      onclick={() =>
-                                        startEditComment(
-                                          comment.id,
-                                          comment.body,
-                                        )}
-                                    >
-                                      <PencilIcon class="size-4" />
-                                      Edit
-                                    </DropdownMenu.DropdownMenuItem>
-                                    <DropdownMenu.DropdownMenuItem
-                                      variant="destructive"
-                                      onclick={() => deleteComment(comment.id)}
-                                    >
-                                      <Trash2Icon class="size-4" />
-                                      Delete
-                                    </DropdownMenu.DropdownMenuItem>
-                                  </DropdownMenu.DropdownMenuContent>
-                                </DropdownMenu.DropdownMenu>
-                              </Item.Actions>
+                              <span
+                                class="ml-auto text-xs font-normal text-muted-foreground"
+                              >
+                                • {timeAgo(comment.created_at)}
+                              </span>
+                            </Item.Title>
+                            {#if editingCommentId === comment.id}
+                              <Textarea
+                                bind:value={editBody}
+                                class="mt-1 min-h-[60px] resize-none"
+                              />
+                              <div class="mt-1 flex gap-2">
+                                <Button
+                                  size="sm"
+                                  onclick={() => saveEditComment(comment.id)}
+                                  disabled={!editBody.trim()}
+                                >
+                                  Save
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onclick={cancelEditComment}>Cancel</Button
+                                >
+                              </div>
+                            {:else}
+                              <Item.Description class="whitespace-pre-wrap"
+                                >{comment.body}</Item.Description
+                              >
                             {/if}
-                          </Item.Root>
-                        {/each}
-                      </Item.Group>
-                    </ScrollAreaPrimitive.Viewport>
-                    <ScrollAreaScrollbar orientation="vertical" />
-                    <ScrollAreaPrimitive.Corner />
-                  </ScrollAreaPrimitive.Root>
+                          </Item.Content>
+                          {#if comment.author_id === currentUser?.id && editingCommentId !== comment.id}
+                            <Item.Actions>
+                              <DropdownMenu.DropdownMenu>
+                                <DropdownMenu.DropdownMenuTrigger>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label="Comment options"
+                                  >
+                                    <EllipsisIcon class="size-4" />
+                                  </Button>
+                                </DropdownMenu.DropdownMenuTrigger>
+                                <DropdownMenu.DropdownMenuContent align="end">
+                                  <DropdownMenu.DropdownMenuItem
+                                    onclick={() =>
+                                      startEditComment(
+                                        comment.id,
+                                        comment.body,
+                                      )}
+                                  >
+                                    <PencilIcon class="size-4" />
+                                    Edit
+                                  </DropdownMenu.DropdownMenuItem>
+                                  <DropdownMenu.DropdownMenuItem
+                                    variant="destructive"
+                                    onclick={() => deleteComment(comment.id)}
+                                  >
+                                    <Trash2Icon class="size-4" />
+                                    Delete
+                                  </DropdownMenu.DropdownMenuItem>
+                                </DropdownMenu.DropdownMenuContent>
+                              </DropdownMenu.DropdownMenu>
+                            </Item.Actions>
+                          {/if}
+                        </Item.Root>
+                      {/each}
+                    </Item.Group>
+                  </div>
                 {/if}
 
                 <Separator />
@@ -1182,3 +1142,15 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
+
+<style>
+  .comment-scroll {
+    max-height: 50vh;
+    overflow-y: auto;
+    border-radius: 8px;
+    outline: none;
+  }
+  .comment-scroll:focus-visible {
+    outline: 3px solid rgb(120 149 232 / 22%);
+  }
+</style>

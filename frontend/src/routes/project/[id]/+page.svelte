@@ -2,7 +2,7 @@
   import { page } from "$app/state";
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
-  import { toast } from "svelte-sonner";
+  import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import { refCache } from "$lib/task-manager/ref-cache.js";
   import type {
@@ -14,11 +14,11 @@
     User,
     WorkflowState,
   } from "$lib/task-manager/types.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import * as DropdownMenu from "$lib/components/native/dropdown-menu/index.js";
+  import * as Select from "$lib/components/native/select/index.js";
   import ProjectTaskTable, {
     type EditableField,
     type TaskCreateInput,

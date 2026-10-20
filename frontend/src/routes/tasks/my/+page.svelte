@@ -17,12 +17,12 @@
     taskState,
   } from "$lib/task-manager/utils.js";
 
-  import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import * as Empty from "$lib/components/ui/empty/index.js";
-  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+  import * as Tabs from "$lib/components/native/tabs/index.js";
+  import * as Table from "$lib/components/native/table/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import * as Empty from "$lib/components/native/empty/index.js";
+  import { Skeleton } from "$lib/components/native/skeleton/index.js";
   import TaskDetailModal from "$lib/components/task-manager/task-detail-modal.svelte";
 
   import ArrowRightIcon from "@lucide/svelte/icons/arrow-right";

@@ -19,8 +19,8 @@ async def _create_tables(db_engine):
 
 
 @pytest.mark.asyncio
-async def test_get_meta_list_and_detail(superuser_client):
-    """Assert /api/meta lists entities and /api/meta/{entity} returns field metadata."""
+async def test_get_meta_list(superuser_client):
+    """Assert /api/meta lists entities for module/navigation bootstrapping."""
     list_resp = await superuser_client.get("/api/meta")
     assert list_resp.status_code == 200
     list_payload = list_resp.json()
@@ -30,26 +30,13 @@ async def test_get_meta_list_and_detail(superuser_client):
     assert "role" in names
     assert "user" in names
 
-    detail_resp = await superuser_client.get("/api/meta/role")
-    assert detail_resp.status_code == 200
-    detail_payload = detail_resp.json()
-    assert detail_payload["status"] == "success"
-    assert detail_payload["data"]["name"] == "role"
-    assert "fields" in detail_payload["data"]
-    field_keys = {f["key"] for f in detail_payload["data"]["fields"]}
-    assert "name" in field_keys
-    assert "description" in field_keys
-    assert "is_active" in field_keys
-
 
 @pytest.mark.asyncio
-async def test_meta_detail_returns_error_for_unknown_entity(superuser_client):
-    """Assert /api/meta/{entity} returns a controlled error for unknown entities."""
-    resp = await superuser_client.get("/api/meta/unknown_entity_xyz")
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["status"] == "error"
-    assert "not found" in payload["message"].lower()
+async def test_meta_detail_endpoint_removed(superuser_client):
+    """The svelte-rendering /api/meta/{entity} endpoint was removed; schema is
+    owned by SQLAlchemy models, not served to the frontend as metadata."""
+    resp = await superuser_client.get("/api/meta/role")
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

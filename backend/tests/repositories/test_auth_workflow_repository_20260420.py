@@ -6,7 +6,11 @@ import pytest
 from dataclasses import dataclass
 
 from app.core.framework.models.auth import EntityPermission, Role, User
-from app.core.framework.models.workflow import Workflow, WorkflowAction, WorkflowState, WorkflowStateLink, WorkflowTransition, generate_slug
+from app.core.framework.models.workflow import Workflow
+from app.core.framework.models.workflow_action import WorkflowAction
+from app.core.framework.models.workflow_state import WorkflowState, generate_slug
+from app.core.framework.models.workflow_state_link import WorkflowStateLink
+from app.core.framework.models.workflow_transition import WorkflowTransition
 from app.infrastructure.database.repositories.auth_repository import AuthRepository
 from app.infrastructure.database.repositories.workflow_repository import WorkflowRepository
 
@@ -67,10 +71,9 @@ async def test_workflow_repository_returns_initial_state_and_valid_transition(db
     approved_link = WorkflowStateLink(id=record_id_factory("link"), workflow_id=workflow.id, state_id=approved.id, is_initial=False, sort_order=2)
     transition = WorkflowTransition(
         id=record_id_factory("transition"),
-        workflow_id=workflow.id,
-        from_state_id=draft.id,
+        from_state_link_id=draft_link.id,
         action_id=action.id,
-        to_state_id=approved.id,
+        to_state_link_id=approved_link.id,
         sort_order=1,
     )
     db_session.add_all([draft, approved, action, workflow, draft_link, approved_link, transition])
@@ -89,7 +92,7 @@ async def test_workflow_repository_returns_initial_state_and_valid_transition(db
 @pytest.mark.asyncio
 async def test_workflow_repository_owner_permission(db_session, record_id_factory):
     """Assert that WorkflowRepository validates owner permission when 'Owner' is in allowed_roles."""
-    from app.modules.work_mgmt.models.work_order import WorkOrder
+    from app.modules.project_tasks.models.task import Task
     from unittest.mock import patch
     
     # Use unique entity name to avoid conflicts
@@ -132,33 +135,31 @@ async def test_workflow_repository_owner_permission(db_session, record_id_factor
     # Transition with "Owner" permission
     transition = WorkflowTransition(
         id=record_id_factory("transition"),
-        workflow_id=workflow.id,
-        from_state_id=draft.id,
+        from_state_link_id=draft_link.id,
         action_id=action.id,
-        to_state_id=closed.id,
+        to_state_link_id=closed_link.id,
         sort_order=1,
     )
     transition.set_allowed_roles(["Owner"])
-    
-    # Create a work order record with owner
+
+    # Create a record with owner
     owner_id = record_id_factory("owner")
-    work_order = WorkOrder(
-        id=record_id_factory("wo"),
-        workflow_state=draft_slug,
+    record = Task(
+        id=record_id_factory("task"),
         created_by=owner_id,
     )
-    
-    db_session.add_all([draft, closed, action, workflow, draft_link, closed_link, transition, work_order])
+
+    db_session.add_all([draft, closed, action, workflow, draft_link, closed_link, transition, record])
     await db_session.flush()
-    
+
     repository = WorkflowRepository(db_session)
-    
-    # Mock get_entity_model to return WorkOrder for our test entity
-    with patch('app.infrastructure.database.repositories.entity_repository.get_entity_model', return_value=WorkOrder):
+
+    # Mock get_entity_model to return Task for our test entity
+    with patch('app.infrastructure.database.repositories.entity_repository.get_entity_model', return_value=Task):
         # Test 1: Owner can perform the transition
         owner_user = MockUser(id=owner_id, username="owner", roles=[])
         is_valid, target_state, error = await repository.validate_transition(
-            entity_name, draft_slug, action_slug, owner_user, work_order.id
+            entity_name, draft_slug, action_slug, owner_user, record.id
         )
         assert is_valid is True
         assert target_state == closed_slug
@@ -167,7 +168,7 @@ async def test_workflow_repository_owner_permission(db_session, record_id_factor
         # Test 2: Non-owner cannot perform the transition
         other_user = MockUser(id=record_id_factory("other"), username="other", roles=[])
         is_valid, target_state, error = await repository.validate_transition(
-            entity_name, draft_slug, action_slug, other_user, work_order.id
+            entity_name, draft_slug, action_slug, other_user, record.id
         )
         assert is_valid is False
         assert target_state is None
@@ -175,12 +176,12 @@ async def test_workflow_repository_owner_permission(db_session, record_id_factor
         
         # Test 3: get_available_actions respects owner permission
         owner_actions = await repository.get_available_actions(
-            entity_name, draft_slug, owner_user, work_order.id
+            entity_name, draft_slug, owner_user, record.id
         )
         assert len(owner_actions) == 1
         assert owner_actions[0]["action_slug"] == action_slug
         
         other_actions = await repository.get_available_actions(
-            entity_name, draft_slug, other_user, work_order.id
+            entity_name, draft_slug, other_user, record.id
         )
         assert len(other_actions) == 0

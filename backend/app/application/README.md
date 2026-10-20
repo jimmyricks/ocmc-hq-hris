@@ -57,8 +57,7 @@ application/
     ├── integrations/
     │   ├── audit.py              # Audit log writer
     │   ├── error_logger.py       # Application error persistence
-    │   ├── import_export.py      # Bulk CSV import/export logic
-    │   └── metadata_sync_service.py  # Atomic metadata sync orchestration
+    │   └── import_export.py      # Bulk CSV import/export logic
     ├── maintenance/
     │   ├── constants.py          # FREQUENCY_DAYS and other maintenance constants
     │   └── job_service.py        # MaintenanceJobService (scheduler job orchestration)

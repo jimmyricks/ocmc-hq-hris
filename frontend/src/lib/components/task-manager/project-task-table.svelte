@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { toast } from "svelte-sonner";
-  import * as Empty from "$lib/components/ui/empty/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
+  import { toast } from "$lib/notifications";
+  import * as Empty from "$lib/components/native/empty/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
+  import { Skeleton } from "$lib/components/native/skeleton/index.js";
+  import * as Select from "$lib/components/native/select/index.js";
   import type { Priority, Task, TaskType } from "$lib/task-manager/types.js";
   import {
     formatDueDate,

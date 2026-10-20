@@ -4,18 +4,17 @@
   import "../app.css";
   import AppSidebar from "$lib/components/app-sidebar.svelte";
   import AssistantChat from "$lib/components/assistant-chat.svelte";
-  import * as Breadcrumb from "$lib/components/ui/breadcrumb/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
-  import * as Sidebar from "$lib/components/ui/sidebar/index.js";
-  import { Toaster } from "$lib/components/ui/sonner";
+  import Toaster from "$lib/components/design/toaster.svelte";
+  import MenuIcon from "@lucide/svelte/icons/menu";
 
   let { children } = $props();
   let isPublic = $derived(page.url.pathname === "/login");
+  let navOpen = $state(false);
 
   type Crumb = { label: string; href: string; isLast: boolean };
 
   const LABEL_OVERRIDES: Record<string, string> = {
-    "model-editor": "Model Editor",
+    "tasks-rates": "Tasks & Rates",
     "task-type": "Task Types",
     "oc-audit-log": "Audit Logs",
     "task-assignment": "Task Assignments",
@@ -33,11 +32,7 @@
     );
   }
 
-  function buildCrumbs(
-    pathname: string,
-    routeId: string | null,
-    params: Record<string, string>,
-  ) {
+  function buildCrumbs(pathname: string, routeId: string | null): Crumb[] {
     const parts = pathname.split("/").filter(Boolean);
     const routeParts = (routeId || "").split("/").filter(Boolean);
     const out: Crumb[] = [];
@@ -45,17 +40,15 @@
     for (let i = 0; i < parts.length; i++) {
       const segment = parts[i];
       href += `/${segment}`;
-      const routeSegment = routeParts[i] || "";
-      const match = routeSegment.match(/^\[(\w+)\]$/);
-      const paramName = match ? match[1] : null;
-      const label = paramName === "id" ? segment : formatSegment(segment);
+      const match = (routeParts[i] || "").match(/^\[(\w+)\]$/);
+      const label = match?.[1] === "id" ? segment : formatSegment(segment);
       out.push({ label, href, isLast: i === parts.length - 1 });
     }
-    return out.length ? out : [{ label: "Home", href: "/", isLast: true }];
+    return out.length ? out : [{ label: "Home", href: "/dashboard", isLast: true }];
   }
 
   const crumbs = $derived(
-    buildCrumbs(page.url.pathname, page.route?.id ?? null, page.params),
+    buildCrumbs(page.url.pathname, page.route?.id ?? null),
   );
 </script>
 
@@ -70,54 +63,105 @@
     {@render children()}
   </div>
 {:else}
-  <Sidebar.Provider>
-    <AppSidebar />
-    <Sidebar.Inset class="hq-workspace min-h-svh bg-background">
-      <header
-        class="sticky top-0 z-30 flex h-16 shrink-0 items-center border-b border-border/70 bg-background/90 px-4 backdrop-blur-xl md:px-8"
-      >
-        <div class="flex w-full items-center gap-3">
-          <Sidebar.Trigger class="-ms-1 rounded-lg" />
-          <Separator
-            orientation="vertical"
-            class="data-[orientation=vertical]:h-5"
-          />
-          <Breadcrumb.Root>
-            <Breadcrumb.List class="text-xs sm:text-sm">
-              {#each crumbs as crumb, i (crumb.href)}
-                {#if i > 0}
-                  <Breadcrumb.Separator class="hidden sm:block" />
-                {/if}
-                <Breadcrumb.Item class={crumb.isLast ? "" : "hidden sm:block"}>
-                  {#if crumb.isLast}
-                    <Breadcrumb.Page class="font-medium text-foreground">
-                      {crumb.label}
-                    </Breadcrumb.Page>
-                  {:else}
-                    <Breadcrumb.Link href={crumb.href}>
-                      {crumb.label}
-                    </Breadcrumb.Link>
-                  {/if}
-                </Breadcrumb.Item>
-              {/each}
-            </Breadcrumb.List>
-          </Breadcrumb.Root>
-          <div
-            class="ms-auto hidden items-center gap-2 rounded-md border border-border/70 bg-card px-3 py-1.5 text-[11px] font-medium tracking-wide text-muted-foreground md:flex"
-          >
-            <span class="size-1.5 rounded-full bg-emerald-500"></span>
-            COMPANY WORKSPACE
-          </div>
+  <div class="hq-shell">
+    <button
+      class="hq-mobile-scrim"
+      data-open={navOpen}
+      type="button"
+      aria-label="Close navigation"
+      tabindex={navOpen ? 0 : -1}
+      onclick={() => (navOpen = false)}
+    ></button>
+    <AppSidebar open={navOpen} onClose={() => (navOpen = false)} />
+
+    <div class="hq-main">
+      <header class="hq-topbar">
+        <button
+          class="hq-mobile-menu"
+          type="button"
+          aria-label="Open navigation"
+          aria-expanded={navOpen}
+          onclick={() => (navOpen = true)}
+        >
+          <MenuIcon size={18} />
+        </button>
+        <span class="hq-topbar__divider" aria-hidden="true"></span>
+        <nav class="hq-breadcrumb" aria-label="Breadcrumb">
+          {#each crumbs as crumb, i (crumb.href)}
+            {#if i > 0}<span class="hq-breadcrumb__separator">/</span>{/if}
+            {#if crumb.isLast}
+              <span aria-current="page">{crumb.label}</span>
+            {:else}
+              <a href={crumb.href}>{crumb.label}</a>
+            {/if}
+          {/each}
+        </nav>
+        <div class="hq-topbar__context">
+          <span></span>
+          Company workspace
         </div>
       </header>
-      <main
-        class="mx-auto flex w-full max-w-[1680px] flex-1 flex-col px-4 py-6 sm:px-6 lg:px-9 lg:py-8"
-      >
+      <main class="hq-page">
         {@render children()}
       </main>
-    </Sidebar.Inset>
-  </Sidebar.Provider>
+    </div>
+  </div>
   <AssistantChat />
 {/if}
 
 <Toaster />
+
+<style>
+  .hq-topbar__divider {
+    width: 1px;
+    height: 22px;
+    background: #e2e7ef;
+  }
+  .hq-breadcrumb {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 9px;
+    color: #344256;
+    font-size: 12px;
+  }
+  .hq-breadcrumb a {
+    color: #7a8798;
+    text-decoration: none;
+  }
+  .hq-breadcrumb a:hover {
+    color: #2457d6;
+  }
+  .hq-breadcrumb [aria-current="page"] {
+    overflow: hidden;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hq-breadcrumb__separator {
+    color: #aab4c1;
+  }
+  .hq-topbar__context {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-left: auto;
+    color: #758196;
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.075em;
+    text-transform: uppercase;
+  }
+  .hq-topbar__context span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #27a875;
+    box-shadow: 0 0 0 3px #e5f5ed;
+  }
+  @media (max-width: 800px) {
+    .hq-topbar__context {
+      display: none;
+    }
+  }
+</style>

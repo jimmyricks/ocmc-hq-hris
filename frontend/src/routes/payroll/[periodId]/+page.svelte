@@ -2,7 +2,7 @@
   import { page } from "$app/state";
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
-  import { toast } from "svelte-sonner";
+  import { toast } from "$lib/notifications";
   import { payrollApi } from "$lib/payroll/api.js";
   import { taskApi } from "$lib/task-manager/api.js";
   import type {
@@ -14,13 +14,13 @@
   import { getToken } from "$lib/auth";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
 
-  import * as Card from "$lib/components/ui/card/index.js";
-  import * as Empty from "$lib/components/ui/empty/index.js";
-  import * as Item from "$lib/components/ui/item/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import * as Avatar from "$lib/components/ui/avatar/index.js";
-  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+  import * as Card from "$lib/components/native/card/index.js";
+  import * as Empty from "$lib/components/native/empty/index.js";
+  import * as Item from "$lib/components/native/item/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import * as Avatar from "$lib/components/native/avatar/index.js";
+  import { Skeleton } from "$lib/components/native/skeleton/index.js";
 
   import PlayIcon from "@lucide/svelte/icons/play";
   import BanknoteIcon from "@lucide/svelte/icons/banknote";

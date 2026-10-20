@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Any, Optional
@@ -8,7 +8,6 @@ from app.core.security import get_current_user_from_token, CurrentUser
 from app.core.framework.models.auth import EntityPermission
 from app.core.framework.models.ordering import ModuleOrder, EntityOrder
 from app.core.constants.permissions import ROW_SCOPE_ALL, PERMISSION_FLAGS, merge_scope
-from app.infrastructure.database.repositories.workflow_repository import WorkflowRepository
 
 router = APIRouter(prefix="/meta", tags=["meta"])
 
@@ -197,108 +196,25 @@ async def get_meta_list(
     }
 
 
-@router.get("/{entity}", name="get_meta_detail")
-async def get_meta_detail(
-    entity: str,
+@router.post("/reload", name="reload_meta")
+async def reload_meta(
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get Svelte-optimized metadata for a specific entity."""
-    from app.core.exceptions import ForbiddenError
+    """Reload all entity metadata into the registry.
 
-    meta = MetaRegistry.get(entity)
-    if not meta:
-        return {
-            "status": "error",
-            "message": f"Entity '{entity}' not found",
-        }
-
+    Superuser-only helper for development: uvicorn does not watch entity
+    JSON files, so hand-edited UI config needs an explicit reload (model
+    changes still require a process restart, same as before).
+    """
     user: CurrentUser = await get_current_user_from_token(authorization, db)
+    if not (user.is_superuser or "SystemManager" in (user.roles or [])):
+        raise HTTPException(status_code=403, detail="Superuser access required")
 
-    # Default permissions (superuser / SystemManager)
-    permissions = {
-        "can_read": True,
-        "can_create": True,
-        "can_update": True,
-        "can_delete": True,
-        "can_select": True,
-        "can_export": True,
-        "can_import": True,
-        "in_sidebar": True,
-        "row_scope": [ROW_SCOPE_ALL],
-    }
+    from app.entities import reload_all_entities
 
-    # Aggregated permissions for ALL entities the user has access to
-    # (needed for link field permissions)
-    all_perms_by_entity: dict[str, dict[str, Any]] = {}
-
-    if user and not user.is_superuser:
-        role_ids = user.role_ids
-        result = await db.execute(
-            select(EntityPermission)
-            .where(EntityPermission.role_id.in_(role_ids))
-        )
-        all_perms = result.scalars().all()
-        all_perms_by_entity = _aggregate_permissions(all_perms)
-
-        entity_perms = all_perms_by_entity.get(entity)
-        if entity_perms:
-            permissions = {
-                "can_read": entity_perms.get("can_read", False),
-                "can_create": entity_perms.get("can_create", False),
-                "can_update": entity_perms.get("can_update", False),
-                "can_delete": entity_perms.get("can_delete", False),
-                "can_select": entity_perms.get("can_select", False),
-                "can_export": entity_perms.get("can_export", False),
-                "can_import": entity_perms.get("can_import", False),
-                "in_sidebar": entity_perms.get("in_sidebar", False),
-                "row_scope": entity_perms.get("row_scope", [ROW_SCOPE_ALL]),
-            }
-        else:
-            permissions = {
-                "can_read": False,
-                "can_create": False,
-                "can_update": False,
-                "can_delete": False,
-                "can_select": False,
-                "can_export": False,
-                "can_import": False,
-                "in_sidebar": False,
-                "row_scope": [ROW_SCOPE_ALL],
-            }
-
-    # If user cannot read this entity, return 403
-    if not permissions["can_read"] and entity != "user":
-        raise ForbiddenError(f"You don't have permission to access {meta.label}")
-
-    # Build link_permissions map for link fields (can_read, can_select per linked entity)
-    link_field_permissions: dict[str, dict[str, Any]] = {}
-    if meta.fields:
-        for field in meta.fields:
-            link_entity = getattr(field, 'link_entity', None) or getattr(field, 'child_entity', None)
-            if not link_entity or link_entity in link_field_permissions:
-                continue
-            if user and user.is_superuser:
-                link_field_permissions[link_entity] = {
-                    "can_read": True,
-                    "can_select": True,
-                    "can_create": True,
-                    "row_scope": [ROW_SCOPE_ALL],
-                }
-            else:
-                lp = all_perms_by_entity.get(link_entity, {})
-                link_field_permissions[link_entity] = {
-                    "can_read": lp.get("can_read", False),
-                    "can_select": lp.get("can_select", False) or lp.get("can_read", False),
-                    "can_create": lp.get("can_create", False),
-                    "row_scope": lp.get("row_scope", [ROW_SCOPE_ALL]),
-                }
-
-    # Svelte-optimized payload: flat, table-ready metadata
-    data = MetaRegistry.to_svelte_dict(meta)
-    data["link_field_permissions"] = link_field_permissions
-
+    count = reload_all_entities()
     return {
         "status": "success",
-        "data": data,
+        "data": {"entity_count": count},
     }

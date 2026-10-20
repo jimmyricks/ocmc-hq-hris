@@ -7,9 +7,9 @@
   import { payrollApi } from "$lib/payroll/api.js";
   import type { PayrollEntry } from "$lib/payroll/types.js";
   import TaskDetailModal from "$lib/components/task-manager/task-detail-modal.svelte";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import * as Card from "$lib/components/ui/card/index.js";
-  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import * as Card from "$lib/components/native/card/index.js";
+  import { Skeleton } from "$lib/components/native/skeleton/index.js";
   import { taskApi } from "$lib/task-manager/api.js";
   import type {
     Project,

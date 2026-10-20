@@ -42,14 +42,6 @@ infrastructure/
 ├── logging/
 │   ├── email_logger.py         # Logs email send attempts to email_log table
 │   └── job_logger.py           # Logs scheduled job runs to scheduled_job_log table
-├── metadata/
-│   ├── adapters.py             # Re-export shim for backward compatibility
-│   ├── reader.py               # JsonMetadataReader — reads entity JSON from disk
-│   ├── writer.py               # JsonMetadataWriter — writes + backs up entity JSON
-│   ├── validator.py            # MetadataValidator — structural validation
-│   ├── model_generator.py      # ModelGeneratorService — generates SQLAlchemy model code
-│   ├── migration_service.py    # MigrationService — wraps Alembic (generate/apply/rollback)
-│   └── integrity.py            # Startup integrity check (metadata ↔ model consistency)
 ├── print/
 │   ├── registry.py             # Print assembler registry (OCP pattern)
 │   └── assemblers/
@@ -142,17 +134,12 @@ async with async_session_maker() as db:
 
 ## Metadata
 
-The metadata layer handles the entity JSON definition lifecycle: read, validate, write, generate models, generate migrations.
-
-```
-JSON file → Reader → Validator → Writer (with backup)
-                             ↓
-                     ModelGenerator → .py model file
-                             ↓
-                     MigrationService → Alembic migration
-```
-
-Prefer using the Forge CLI (`python -m app.forge sync`) rather than calling these services directly.
+Entity schema is owned by the SQLAlchemy models (migrated with Alembic).
+Entity JSON files under `modules/*/entities/` contribute only UI/behaviour
+configuration (labels, list-view flags, options, rbac, actions); field schema
+is derived from the models at load time by `app/meta/model_introspection.py`.
+Schema changes are made by editing model files and running
+`python -m app.forge migrate` (Alembic autogenerate + upgrade).
 
 ---
 

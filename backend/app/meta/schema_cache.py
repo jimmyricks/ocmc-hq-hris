@@ -39,12 +39,25 @@ logger = logging.getLogger(__name__)
 
 # Cache directory relative to this file: backend/app/meta/ → backend/.schema_cache/
 _CACHE_DIR = Path(__file__).parent.parent.parent / ".schema_cache"
-_CACHE_VERSION = "v1"  # bump to invalidate all cached schemas on breaking changes
+_CACHE_VERSION = "v2"  # bump to invalidate all cached schemas on breaking changes
 
 
 def _file_md5(path: Path) -> str:
     """Return the MD5 hex-digest of a file's contents."""
     return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def _fingerprint_md5(path: Path, entity_meta) -> str:
+    """MD5 of the JSON file plus the derived-field fingerprint.
+
+    Field schema is derived from the SQLAlchemy model at load time, so a
+    model change without a JSON change must still invalidate cached schemas.
+    """
+    from app.meta.model_introspection import fields_fingerprint
+
+    digest = hashlib.md5(path.read_bytes())
+    digest.update(fields_fingerprint(entity_meta.fields).encode())
+    return digest.hexdigest()
 
 
 def _cache_path(entity_name: str, kind: str, file_hash: str) -> Path:
@@ -111,7 +124,7 @@ def load_or_build_schemas(
             build_read_schema(entity_meta),
         )
 
-    file_hash = _file_md5(json_path)
+    file_hash = _fingerprint_md5(json_path, entity_meta)
     _evict_stale(entity_meta.name, file_hash)
 
     write_path = _cache_path(entity_meta.name, "write", file_hash)

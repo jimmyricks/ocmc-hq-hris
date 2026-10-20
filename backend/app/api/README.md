@@ -44,7 +44,7 @@ api/
 ├── system/                 # Infrastructure / admin endpoints
 │   ├── auth.py             # POST /login, POST /logout
 │   ├── profile.py          # GET /me, PUT /me, POST /change-password
-│   ├── meta.py             # GET entity metadata (fields, actions, workflow)
+│   ├── meta.py             # GET accessible entities, POST /meta/reload
 │   ├── workflow.py         # Workflow CRUD (admin)
 │   ├── health.py           # GET /health
 │   ├── version.py          # GET /version
@@ -61,7 +61,6 @@ api/
 │       ├── permissions.py  # Permission matrix
 │       ├── api_keys.py     # API key management
 │       ├── sessions.py     # Active session management
-│       ├── model_editor.py # Entity model editor (DEVELOPER_MODE only)
 │       └── ordering.py     # Module / entity ordering
 └── services/               # Backward-compat shims (re-exports to features/)
     ├── email.py

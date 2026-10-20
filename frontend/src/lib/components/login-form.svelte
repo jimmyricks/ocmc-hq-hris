@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button/index.js";
-  import * as Card from "$lib/components/ui/card/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import * as Card from "$lib/components/native/card/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
   import {
     FieldGroup,
     Field,
     FieldLabel,
     FieldDescription,
     FieldError,
-  } from "$lib/components/ui/field/index.js";
+  } from "$lib/components/native/field/index.js";
 
   const id = $props.id();
 

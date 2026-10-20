@@ -1,7 +1,7 @@
 """
 Unit tests for the SQL filter builder (``clause_to_sqlalchemy`` / ``build_clause_list``).
 
-Uses the real ``WorkOrder`` model from the loaded entity registry against an
+Uses the real ``Task`` model from the loaded entity registry against an
 in-memory SQLite session to verify that each operator produces correct SQL.
 """
 from __future__ import annotations
@@ -25,11 +25,11 @@ class _StubUser:
         self.id = user_id
 
 
-def _get_work_order_model():
-    """Import the dynamic WorkOrder model from the loaded entity registry."""
+def _get_task_model():
+    """Import the dynamic Task model from the loaded entity registry."""
     from app.infrastructure.database.repositories.entity_repository import get_entity_model
-    model = get_entity_model("work_order")
-    assert model is not None, "WorkOrder model not found — entities not loaded"
+    model = get_entity_model("task")
+    assert model is not None, "Task model not found — entities not loaded"
     return model
 
 
@@ -37,7 +37,7 @@ def _selectable_columns(model) -> set[str]:
     return set(model.__table__.columns.keys())
 
 
-MODEL = _get_work_order_model()
+MODEL = _get_task_model()
 COLUMNS = _selectable_columns(MODEL)
 USER = _StubUser()
 
@@ -52,28 +52,28 @@ class TestClauseToSqlalchemy:
         return str(clause_to_sqlalchemy(MODEL, clause, **kwargs).compile(compile_kwargs={"literal_binds": True}))
 
     def test_eq(self):
-        expr = self._expr(FilterClause(field="workflow_state", op="eq", value="Closed"))
-        assert "workflow_state" in expr
+        expr = self._expr(FilterClause(field="status", op="eq", value="Closed"))
+        assert "status" in expr
         assert "Closed" in expr
         # With case-insensitive string ops we get func.lower
         assert "lower" not in expr
 
     def test_eq_with_case_insensitive(self):
         expr = self._expr(
-            FilterClause(field="workflow_state", op="eq", value="Closed"),
+            FilterClause(field="status", op="eq", value="Closed"),
             case_insensitive_string_ops=True,
         )
         # Table prefix may vary; check that lowercase comparison is used
         assert "lower(" in expr
 
     def test_ne(self):
-        expr = self._expr(FilterClause(field="workflow_state", op="ne", value="Closed"))
+        expr = self._expr(FilterClause(field="status", op="ne", value="Closed"))
         # NE becomes IS NULL OR !=, depending on backend
         assert "IS NULL" in expr or "!=" in expr or "NOT" in expr
 
     def test_ne_with_case_insensitive(self):
         expr = self._expr(
-            FilterClause(field="workflow_state", op="ne", value="Closed"),
+            FilterClause(field="status", op="ne", value="Closed"),
             case_insensitive_string_ops=True,
         )
         assert "lower(" in expr
@@ -95,12 +95,12 @@ class TestClauseToSqlalchemy:
         assert "due_date >=" in expr
 
     def test_in(self):
-        expr = self._expr(FilterClause(field="workflow_state", op="in", value=["Closed", "Approved"]))
-        assert "workflow_state IN" in expr
+        expr = self._expr(FilterClause(field="status", op="in", value=["Closed", "Approved"]))
+        assert "status IN" in expr
 
     def test_nin(self):
-        expr = self._expr(FilterClause(field="workflow_state", op="nin", value=["Closed"]))
-        assert "workflow_state NOT IN" in expr or "NOT (workflow_state IN" in expr
+        expr = self._expr(FilterClause(field="status", op="nin", value=["Closed"]))
+        assert "status NOT IN" in expr or "NOT (status IN" in expr
 
     def test_like(self):
         expr = self._expr(FilterClause(field="description", op="like", value="search"))
@@ -132,7 +132,7 @@ class TestBuildClauseList:
 
     def test_multiple_clauses(self):
         clauses = [
-            FilterClause(field="workflow_state", op="ne", value="Closed"),
+            FilterClause(field="status", op="ne", value="Closed"),
             FilterClause(field="due_date", op="is_null", value=False),
         ]
         exprs = build_clause_list(MODEL, clauses, selectable_columns=COLUMNS, user=USER)
@@ -140,7 +140,7 @@ class TestBuildClauseList:
 
     def test_case_insensitive_field_set(self):
         clauses = [
-            FilterClause(field="workflow_state", op="eq", value="closed"),
+            FilterClause(field="status", op="eq", value="closed"),
             FilterClause(field="description", op="eq", value="hello"),
         ]
         exprs = build_clause_list(
@@ -148,12 +148,12 @@ class TestBuildClauseList:
             clauses,
             selectable_columns=COLUMNS,
             user=USER,
-            case_insensitive_string_fields={"workflow_state"},
+            case_insensitive_string_fields={"status"},
         )
         assert len(exprs) == 2
-        s1 = str(exprs[0])  # workflow_state — case-insensitive
+        s1 = str(exprs[0])  # status — case-insensitive
         s2 = str(exprs[1])  # description — case-sensitive
-        # workflow_state should use lower(), description should not
+        # status should use lower(), description should not
         assert "lower(" in s1, f"Expected case-insensitive in: {s1}"
         assert "lower(" not in s2 or s1 != s2
 

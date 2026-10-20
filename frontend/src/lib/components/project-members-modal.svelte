@@ -1,13 +1,20 @@
 <script lang="ts">
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import * as Field from "$lib/components/ui/field/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Avatar, AvatarFallback } from "$lib/components/ui/avatar/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
-  import { toast } from "svelte-sonner";
+  import * as Dialog from "$lib/components/native/dialog/index.js";
+  import * as Field from "$lib/components/native/field/index.js";
+  import * as Select from "$lib/components/native/select/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import {
+    Avatar,
+    AvatarFallback,
+  } from "$lib/components/native/avatar/index.js";
+  import { Separator } from "$lib/components/native/separator/index.js";
+  import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
-  import type { Project, ProjectMember, User } from "$lib/task-manager/types.js";
+  import type {
+    Project,
+    ProjectMember,
+    User,
+  } from "$lib/task-manager/types.js";
 
   interface Props {
     open?: boolean;
@@ -51,7 +58,13 @@
   }
 
   function initials(name: string): string {
-    return name.split(" ").map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+    return name
+      .split(" ")
+      .map((p) => p[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
   }
 
   // Users not already members
@@ -107,7 +120,12 @@
             onValueChange={(v) => (selectedUserId = v)}
           >
             <Select.Trigger id="member-select" class="w-full">
-              <span class="truncate">{selectedUserId ? users.find((u) => u.id === selectedUserId)?.full_name ?? "Select user..." : "Select user..."}</span>
+              <span class="truncate"
+                >{selectedUserId
+                  ? (users.find((u) => u.id === selectedUserId)?.full_name ??
+                    "Select user...")
+                  : "Select user..."}</span
+              >
             </Select.Trigger>
             <Select.Content>
               {#each availableUsers as user (user.id)}

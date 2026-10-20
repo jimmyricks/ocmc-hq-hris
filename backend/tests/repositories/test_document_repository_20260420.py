@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.framework.models.workflow import WorkflowState
+from app.core.framework.models.workflow_state import WorkflowState
 from app.infrastructure.database.repositories.document_repository import DocumentRepository
 
 

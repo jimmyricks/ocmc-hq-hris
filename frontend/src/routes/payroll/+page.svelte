@@ -1,29 +1,25 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
-  import { toast } from "svelte-sonner";
+  import { toast } from "$lib/notifications";
   import { payrollApi } from "$lib/payroll/api.js";
   import type { PayrollPeriod, PayrollSettings } from "$lib/payroll/types.js";
   import { getToken } from "$lib/auth";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
-  import { cn } from "$lib/utils.js";
 
-  import * as Card from "$lib/components/ui/card/index.js";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import * as Field from "$lib/components/ui/field/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
-  import * as Popover from "$lib/components/ui/popover/index.js";
-  import * as Empty from "$lib/components/ui/empty/index.js";
-  import * as Item from "$lib/components/ui/item/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
-  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
-  import { Switch } from "$lib/components/ui/switch/index.js";
-  import { Label } from "$lib/components/ui/label/index.js";
-  import CalendarPicker from "$lib/components/ui/calendar/calendar.svelte";
-  import { parseDate, type DateValue } from "@internationalized/date";
+  import * as Card from "$lib/components/native/card/index.js";
+  import * as Dialog from "$lib/components/native/dialog/index.js";
+  import * as Field from "$lib/components/native/field/index.js";
+  import * as Select from "$lib/components/native/select/index.js";
+  import * as Empty from "$lib/components/native/empty/index.js";
+  import * as Item from "$lib/components/native/item/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import { Separator } from "$lib/components/native/separator/index.js";
+  import { Skeleton } from "$lib/components/native/skeleton/index.js";
+  import { Switch } from "$lib/components/native/switch/index.js";
+  import { Label } from "$lib/components/native/label/index.js";
 
   import PlusIcon from "@lucide/svelte/icons/plus";
   import SettingsIcon from "@lucide/svelte/icons/settings";
@@ -45,10 +41,6 @@
     end_date: "",
     cutoff: "",
   });
-  let startCalendarValue: DateValue[] = $state([]);
-  let endCalendarValue: DateValue[] = $state([]);
-  let startCalOpen = $state(false);
-  let endCalOpen = $state(false);
 
   // Settings dialog
   let settingsOpen = $state(false);
@@ -145,29 +137,10 @@
       end_date: endDate,
       cutoff: endDate,
     };
-    startCalendarValue = startDate ? [parseDate(startDate)] : [];
-    endCalendarValue = endDate ? [parseDate(endDate)] : [];
     createOpen = true;
   }
 
-  function onStartDateChange(v: DateValue[] | undefined) {
-    startCalendarValue = v ?? [];
-    const selected = startCalendarValue[0];
-    newPeriod.start_date = selected ? selected.toString() : "";
-    startCalOpen = false;
-    if (newPeriod.start_date && newPeriod.end_date) {
-      newPeriod.label = `${newPeriod.start_date} → ${newPeriod.end_date}`;
-    }
-  }
-
-  function onEndDateChange(v: DateValue[] | undefined) {
-    endCalendarValue = v ?? [];
-    const selected = endCalendarValue[0];
-    newPeriod.end_date = selected ? selected.toString() : "";
-    if (!newPeriod.cutoff || newPeriod.cutoff < newPeriod.end_date) {
-      newPeriod.cutoff = newPeriod.end_date;
-    }
-    endCalOpen = false;
+  function updatePeriodLabel() {
     if (newPeriod.start_date && newPeriod.end_date) {
       newPeriod.label = `${newPeriod.start_date} → ${newPeriod.end_date}`;
     }
@@ -341,60 +314,27 @@
       <div class="grid grid-cols-2 gap-4">
         <Field.Field>
           <Field.Label for="period-start">Start Date</Field.Label>
-          <Popover.Root bind:open={startCalOpen}>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  id="period-start"
-                  variant="outline"
-                  class={cn(
-                    "w-full justify-start text-left font-normal",
-                    !newPeriod.start_date && "text-muted-foreground",
-                  )}
-                >
-                  <CalendarIcon class="mr-2 size-4" />
-                  {newPeriod.start_date || "Pick a date"}
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-auto p-0" align="start">
-              <CalendarPicker
-                type="multiple"
-                value={startCalendarValue}
-                onValueChange={onStartDateChange}
-              />
-            </Popover.Content>
-          </Popover.Root>
+          <Input
+            id="period-start"
+            type="date"
+            bind:value={newPeriod.start_date}
+            oninput={updatePeriodLabel}
+          />
         </Field.Field>
 
         <Field.Field>
           <Field.Label for="period-end">End Date</Field.Label>
-          <Popover.Root bind:open={endCalOpen}>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  id="period-end"
-                  variant="outline"
-                  class={cn(
-                    "w-full justify-start text-left font-normal",
-                    !newPeriod.end_date && "text-muted-foreground",
-                  )}
-                >
-                  <CalendarIcon class="mr-2 size-4" />
-                  {newPeriod.end_date || "Pick a date"}
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-auto p-0" align="start">
-              <CalendarPicker
-                type="multiple"
-                value={endCalendarValue}
-                onValueChange={onEndDateChange}
-              />
-            </Popover.Content>
-          </Popover.Root>
+          <Input
+            id="period-end"
+            type="date"
+            bind:value={newPeriod.end_date}
+            oninput={() => {
+              if (!newPeriod.cutoff || newPeriod.cutoff < newPeriod.end_date) {
+                newPeriod.cutoff = newPeriod.end_date;
+              }
+              updatePeriodLabel();
+            }}
+          />
         </Field.Field>
       </div>
 

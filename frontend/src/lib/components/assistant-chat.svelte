@@ -4,9 +4,9 @@
     sendAssistantMessage,
     type AssistantMessage,
   } from "$lib/assistant/api.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import { toast } from "svelte-sonner";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Textarea } from "$lib/components/native/textarea/index.js";
+  import { toast } from "$lib/notifications";
 
   import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
   import ArrowUpRightIcon from "@lucide/svelte/icons/arrow-up-right";

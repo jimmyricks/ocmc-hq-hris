@@ -1,79 +1,67 @@
-<script lang="ts" generics="TData, TValue">
-  import {
-    type ColumnDef,
-    type SortingState,
-    getCoreRowModel,
-    getSortedRowModel,
-  } from "@tanstack/table-core";
-  import {
-    createSvelteTable,
-    FlexRender,
-  } from "$lib/components/ui/data-table/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
+<script lang="ts">
+  import * as Table from "$lib/components/native/table/index.js";
 
-  type DataTableProps<TData, TValue> = {
-    columns: ColumnDef<TData, TValue>[];
-    data: TData[];
+  type LineItemRow = {
+    id: string;
+    taskTitle: string;
+    taskKey?: string;
+    taskTypeName?: string;
+    submissionNotes?: string;
+    rate: string;
+    quantity: number;
+    amount: string;
   };
 
-  let { columns, data }: DataTableProps<TData, TValue> = $props();
-
-  let sorting = $state<SortingState>([]);
-
-  const table = createSvelteTable({
-    get data() {
-      return data;
-    },
-    get columns() {
-      return columns;
-    },
-    state: {
-      get sorting() {
-        return sorting;
-      },
-    },
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    onSortingChange: (updater: SortingState | ((prev: SortingState) => SortingState)) => {
-      if (typeof updater === "function") {
-        sorting = updater(sorting);
-      } else {
-        sorting = updater;
-      }
-    },
-  });
+  let { data }: { data: LineItemRow[] } = $props();
 </script>
 
 <div class="w-full">
   <div class="overflow-hidden rounded-lg border">
     <Table.Root>
       <Table.Header>
-        {#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
-          <Table.Row>
-            {#each headerGroup.headers as header (header.id)}
-              <Table.Head class="text-right last:text-right">
-                {#if !header.isPlaceholder}
-                  <FlexRender content={header.column.columnDef.header} context={header.getContext()} />
-                {/if}
-              </Table.Head>
-            {/each}
-          </Table.Row>
-        {/each}
+        <Table.Row>
+          <Table.Head>Task</Table.Head>
+          <Table.Head>Submission Notes</Table.Head>
+          <Table.Head class="text-right">Rate</Table.Head>
+          <Table.Head class="text-right">Qty</Table.Head>
+          <Table.Head class="text-right">Amount</Table.Head>
+        </Table.Row>
       </Table.Header>
       <Table.Body>
-        {#each table.getRowModel().rows as row (row.id)}
+        {#each data as row (row.id)}
           <Table.Row>
-            {#each row.getVisibleCells() as cell (cell.id)}
-              <Table.Cell class="text-right last:text-right">
-                <FlexRender content={cell.column.columnDef.cell} context={cell.getContext()} />
-              </Table.Cell>
-            {/each}
+            <Table.Cell>
+              <div class="flex flex-col gap-0.5">
+                <span class="font-medium">{row.taskTitle}</span>
+                {#if row.taskTypeName || row.taskKey}
+                  <span class="text-xs text-muted-foreground">
+                    {row.taskTypeName ?? ""}{row.taskTypeName && row.taskKey
+                      ? " · "
+                      : ""}
+                    {#if row.taskKey}<span class="font-mono">{row.taskKey}</span
+                      >{/if}
+                  </span>
+                {/if}
+              </div>
+            </Table.Cell>
+            <Table.Cell>
+              <span class="block max-w-64 truncate text-muted-foreground">
+                {row.submissionNotes ?? "—"}
+              </span>
+            </Table.Cell>
+            <Table.Cell class="text-right tabular-nums">{row.rate}</Table.Cell>
+            <Table.Cell class="text-right tabular-nums"
+              >{row.quantity}</Table.Cell
+            >
+            <Table.Cell class="text-right font-medium tabular-nums"
+              >{row.amount}</Table.Cell
+            >
           </Table.Row>
         {:else}
           <Table.Row>
-            <Table.Cell colspan={columns.length} class="h-24 text-center">
-              No line items.
-            </Table.Cell>
+            <Table.Cell colspan={5} class="h-24 text-center"
+              >No line items.</Table.Cell
+            >
           </Table.Row>
         {/each}
       </Table.Body>

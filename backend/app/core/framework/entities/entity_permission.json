@@ -12,10 +12,10 @@
   "is_system": true,
   "fields": [
     {
-      "name": "role",
+      "name": "role_id",
       "label": "Role",
       "field_type": "link",
-      "target": "role",
+      "link_entity": "role",
       "required": true,
       "in_list_view": true
     },

@@ -47,8 +47,18 @@ def record_id_factory():
 
 @pytest_asyncio.fixture
 async def db_engine():
-    """Create a shared async engine for the local PostgreSQL test database."""
+    """Create a shared async engine for the test database.
+
+    For file/Postgres URLs the schema is expected to already exist (migrated
+    by the app); for in-memory SQLite we create it so the suite can run
+    without a local Postgres instance.
+    """
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    if TEST_DATABASE_URL.startswith("sqlite") and ":memory:" in TEST_DATABASE_URL:
+        from app.core.database import Base
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
     try:
         yield engine
     finally:

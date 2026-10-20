@@ -80,13 +80,30 @@ async def _seed_roles(db_session) -> tuple[Role, Role, Role]:
     return user_role, pm_role, hr_role
 
 
-async def _make_project(db_session, pm_user: User) -> Project:
+async def _make_workspace(db_session):
+    from app.modules.workspaces.models.workspace import Workspace
+
+    workspace = Workspace(
+        id=_unique("workspace"),
+        name=_unique("Workspace"),
+        slug=_unique("ws"),
+        color="#6366f1",
+        timezone="UTC",
+        is_active=True,
+    )
+    db_session.add(workspace)
+    await db_session.flush()
+    return workspace
+
+
+async def _make_project(db_session, pm_user: User, workspace) -> Project:
     repo = EntityRepository(db_session)
     data = {
         "id": _unique("proj"),
         "name": _unique("Project"),
         "description": "Real-world test project",
         "manager_id": pm_user.id,
+        "workspace_id": workspace.id,
         "status": "active",
         "start_date": date.today(),
         "end_date": date.today() + timedelta(days=30),
@@ -96,7 +113,7 @@ async def _make_project(db_session, pm_user: User) -> Project:
     return await repo.create("project", data)
 
 
-async def _make_task_type(db_session, pm_user: User) -> TaskType:
+async def _make_task_type(db_session, pm_user: User, workspace) -> TaskType:
     repo = EntityRepository(db_session)
     data = {
         "id": _unique("tt"),
@@ -104,6 +121,7 @@ async def _make_task_type(db_session, pm_user: User) -> TaskType:
         "description": "Data entry task",
         "unit_rate": Decimal("25.00"),
         "unit": "per_task",
+        "workspace_id": workspace.id,
         "requires_approval": True,
         "created_by": pm_user.id,
         "last_modified_by": pm_user.id,
@@ -149,13 +167,18 @@ async def hr_user(db_session, roles):
 
 
 @pytest_asyncio.fixture
-async def project(db_session, pm_user):
-    return await _make_project(db_session, pm_user)
+async def workspace(db_session):
+    return await _make_workspace(db_session)
 
 
 @pytest_asyncio.fixture
-async def task_type(db_session, pm_user):
-    return await _make_task_type(db_session, pm_user)
+async def project(db_session, pm_user, workspace):
+    return await _make_project(db_session, pm_user, workspace)
+
+
+@pytest_asyncio.fixture
+async def task_type(db_session, pm_user, workspace):
+    return await _make_task_type(db_session, pm_user, workspace)
 
 
 @pytest_asyncio.fixture

@@ -11,18 +11,10 @@
   "is_system": true,
   "fields": [
     {
-      "name": "workflow_id",
-      "label": "Workflow",
-      "field_type": "link",
-      "link_entity": "workflow",
-      "required": true,
-      "in_list_view": true
-    },
-    {
-      "name": "from_state_id",
+      "name": "from_state_link_id",
       "label": "From State",
       "field_type": "link",
-      "link_entity": "workflow_state",
+      "link_entity": "workflow_state_link",
       "required": true,
       "in_list_view": true
     },
@@ -35,10 +27,10 @@
       "in_list_view": true
     },
     {
-      "name": "to_state_id",
+      "name": "to_state_link_id",
       "label": "To State",
       "field_type": "link",
-      "link_entity": "workflow_state",
+      "link_entity": "workflow_state_link",
       "required": true,
       "in_list_view": true
     },

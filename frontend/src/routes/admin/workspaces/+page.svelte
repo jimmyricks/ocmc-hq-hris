@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import * as Card from "$lib/components/ui/card/index.js";
-  import * as Field from "$lib/components/ui/field/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import { toast } from "svelte-sonner";
+  import * as Card from "$lib/components/native/card/index.js";
+  import * as Field from "$lib/components/native/field/index.js";
+  import * as Select from "$lib/components/native/select/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import { workspaceApi } from "$lib/workspaces/api.js";
   import type { WorkspaceContext } from "$lib/workspaces/types.js";

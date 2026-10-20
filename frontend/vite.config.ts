@@ -18,7 +18,7 @@ export default defineConfig({
 		})
 	],
 	ssr: {
-		noExternal: ['@lucide/svelte', 'svelte-sonner']
+		noExternal: ['@lucide/svelte']
 	},
 	server: {
 		proxy: {

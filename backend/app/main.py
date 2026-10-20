@@ -8,7 +8,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from app.core.config import settings
-from app.core.database import init_db, async_session_maker
+from app.core.database import (
+    async_session_maker,
+    init_db,
+    verify_workspace_schema,
+)
 from app.core.seed import run_seeds
 from app.core.loader import load_modules
 from app.core.exceptions import register_exception_handlers
@@ -45,7 +49,9 @@ async def lifespan(app: FastAPI):
     
     # Core models (auth, workflow) are registered by register_core_models()
     
+    await verify_workspace_schema()
     await init_db()
+    await verify_workspace_schema()
     if settings.RUN_SEEDS:
         async with async_session_maker() as db:
             await run_seeds(db)
@@ -57,19 +63,6 @@ async def lifespan(app: FastAPI):
             await seed_workspaces(db)
             await seed_task_types(db)
 
-    # Sync pending metadata changes: update model files, generate + apply
-    # one combined migration for any entities edited since last restart.
-    try:
-        from app.api.dependencies import get_metadata_sync_service
-        sync_service = get_metadata_sync_service()
-        result = sync_service.sync_pending()
-        if result.get("updated_models"):
-            print(f"🔄 Startup sync: {result.get('message', '')}")
-            for w in result.get("warnings", []):
-                print(f"  ⚠️  {w}")
-    except Exception as e:
-        print(f"⚠️  Startup sync skipped: {e}")
-    
     # Initialize scheduler through application service
     from app.application.services.scheduling.app_initialization_service import AppInitializationService
     app_init_service = AppInitializationService()

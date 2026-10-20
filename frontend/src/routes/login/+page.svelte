@@ -4,7 +4,7 @@
   import { goto } from "$app/navigation";
   import { login } from "$lib/api/index.js";
   import { setAuth, getToken } from "$lib/auth";
-  import { Button } from "$lib/components/ui/button/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
   import LoginForm from "$lib/components/login-form.svelte";
 
   let username = $state("");

@@ -1,14 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { toast } from "svelte-sonner";
-  import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
-  import * as Field from "$lib/components/ui/field/index.js";
-  import * as Card from "$lib/components/ui/card/index.js";
-  import { Input } from "$lib/components/ui/input";
-  import { Button } from "$lib/components/ui/button";
-  import { Checkbox } from "$lib/components/ui/checkbox";
-  import { Badge } from "$lib/components/ui/badge";
+  import { toast } from "$lib/notifications";
+  import * as Tabs from "$lib/components/native/tabs/index.js";
+  import * as Table from "$lib/components/native/table/index.js";
+  import * as Field from "$lib/components/native/field/index.js";
+  import * as Card from "$lib/components/native/card/index.js";
+  import { Input } from "$lib/components/native/input";
+  import { Button } from "$lib/components/native/button";
+  import { Checkbox } from "$lib/components/native/checkbox";
+  import { Badge } from "$lib/components/native/badge";
   import { apiJSON } from "$lib/api/index.js";
 
   let destination = $state("");

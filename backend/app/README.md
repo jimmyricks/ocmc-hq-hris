@@ -67,7 +67,6 @@ backend/app/
 │   ├── email/              # SmtpEmailService, notification_factory
 │   ├── events/             # DomainEventBus
 │   ├── logging/            # email_logger, job_logger
-│   ├── metadata/           # JSON reader/writer/validator, model generator
 │   ├── print/              # Print assemblers (WO, PR, PO, Incident)
 │   ├── scheduler/          # APScheduler adapter
 │   ├── settings/           # BrandingStore (JSON file)
@@ -91,7 +90,7 @@ backend/app/
 │       ├── auth/                      # AuthAppService
 │       ├── dashboards/                # DashboardOrchestrator (6 modules)
 │       ├── documents/                 # Document ops (14 files)
-│       ├── integrations/              # Audit, error logging, metadata sync
+│       ├── integrations/              # Audit, error logging, import/export
 │       ├── maintenance/               # MaintenanceJobService, constants
 │       ├── notifications/             # Email + Socket.IO notification services
 │       ├── scheduling/                # SchedulerAppService, AppInitializationService
@@ -115,11 +114,13 @@ backend/app/
 │   └── schemas/            # Pydantic request/response models
 │
 ├── entities/               # Entity metadata loader
-│   ├── __init__.py         # load_all_entities(), feature-flag filtering
-│   └── generator.py        # EntityGenerator (JSON + model scaffolding)
+│   └── __init__.py         # load_all_entities(), feature-flag filtering
 │
 ├── meta/                   # Metadata registry
-│   └── registry.py         # FieldMeta, NamingMeta, ActionMeta, TabConfig
+│   ├── registry.py         # FieldMeta, NamingMeta, ActionMeta, TabConfig
+│   ├── model_introspection.py # Derives field schema from SQLAlchemy models
+│   ├── schema_factory.py   # Builds Pydantic write/read schemas
+│   └── schema_cache.py     # Hash-cached generated schemas
 │
 └── templates/              # Jinja2 email templates
 ```
@@ -165,17 +166,20 @@ Hooks are auto-discovered by the module loader on startup.
 
 ## Adding a New Entity
 
-```bash
-# 1. Scaffold the entity
-python -m app.forge new-entity my_entity \
-  --module my_module \
-  --fields "name:string,status:select,quantity:float"
+SQLAlchemy models + Alembic are the source of truth for schema:
 
-# 2. Apply the migration
-python -m app.forge sync
+```bash
+# 1. Write the model in app/modules/<module>/models/<entity>.py
+# 2. Generate + apply the migration
+python -m app.forge migrate -m "add my_entity"
+
+# 3. Add app/modules/<module>/entities/<entity>.json for UI config
+#    (labels, list-view flags, options, rbac — field schema is derived
+#    from the model at load time; only columns declared in `fields` are
+#    exposed through generic CRUD)
 ```
 
-The JSON definition drives: API routing, list/detail views, form fields, workflow, permissions. No route code is needed for standard CRUD.
+The entity JSON drives: API routing, list/detail views, form fields, workflow, permissions. No route code is needed for standard CRUD.
 
 ---
 
@@ -183,16 +187,14 @@ The JSON definition drives: API routing, list/detail views, form fields, workflo
 
 Run from `backend/` with the virtualenv active.
 
-| Command                                                           | Description                                    |
-| ----------------------------------------------------------------- | ---------------------------------------------- |
-| `python -m app.forge sync`                                        | Generate models + migration + apply (one step) |
-| `python -m app.forge new-entity NAME --module MOD --fields "..."` | Scaffold new entity                            |
-| `python -m app.forge migrate --status`                            | View pending migrations                        |
-| `python -m app.forge migrate --apply-only`                        | Apply without generating                       |
-| `python -m app.forge migrate --rollback N`                        | Roll back N migrations                         |
-| `python -m app.forge status`                                      | System status (modules, entities, DB)          |
-
-**Field types:** `string`, `int`, `float`, `boolean`, `date`, `datetime`, `text`, `select`, `multiselect`, `link`, `json`
+| Command                                    | Description                           |
+| ------------------------------------------ | ------------------------------------- |
+| `python -m app.forge migrate -m "msg"`     | Generate + apply a migration          |
+| `python -m app.forge migrate --status`     | View pending migrations               |
+| `python -m app.forge migrate --apply-only` | Apply without generating              |
+| `python -m app.forge migrate --rollback N` | Roll back N migrations                |
+| `python -m app.forge status`               | System status (modules, entities, DB) |
+| `python -m app.forge generate-types`       | TypeScript interfaces from entities   |
 
 ---
 

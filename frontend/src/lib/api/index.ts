@@ -194,15 +194,6 @@ export async function login(username: string, password: string) {
 	return apiJSON('/api/auth/login', { method: 'POST', body });
 }
 
-export async function getEntities() {
-	return apiJSON('/api/meta');
-}
-
-export async function getEntityMeta(entity: string) {
-	const normalized = normalizeEntity(entity);
-	return apiJSON(`/api/meta/${normalized}`);
-}
-
 export type EntityFilter = {
 	field: string;
 	op: string;
@@ -260,19 +251,4 @@ function normalizeEntity(entity: string): string {
 		"audit-logs": "oc_audit_log"
 	};
 	return mappings[entity] || entity.replace(/-/g, "_");
-}
-
-export async function loadEntity(entity: string, page = 1, pageSize = 20) {
-	const normalized = normalizeEntity(entity);
-	const [metaRes, listRes] = await Promise.all([
-		getEntityMeta(normalized),
-		listEntity(normalized, page, pageSize)
-	]);
-	return {
-		meta: metaRes.data,
-		records: listRes.data ?? [],
-		total: listRes.total ?? 0,
-		page: listRes.page ?? page,
-		pageSize: listRes.page_size ?? pageSize
-	};
 }

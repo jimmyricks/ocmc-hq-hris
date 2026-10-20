@@ -2,14 +2,12 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
-  import * as Field from "$lib/components/ui/field/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { Switch } from "$lib/components/ui/switch/index.js";
+  import * as Field from "$lib/components/native/field/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
+  import { Switch } from "$lib/components/native/switch/index.js";
   import { apiJSON } from "$lib/api/index.js";
-  import { toast } from "svelte-sonner";
-  import { SvelteFlow, Background, Controls, MiniMap } from "@xyflow/svelte";
-  import "@xyflow/svelte/dist/style.css";
+  import { toast } from "$lib/notifications";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
 
   interface Workflow {
@@ -39,9 +37,6 @@
     is_active: true,
   });
 
-  let nodes = $state<any[]>([]);
-  let edges = $state<any[]>([]);
-
   async function loadWorkflow() {
     if (isNew) {
       workflow = null;
@@ -59,33 +54,11 @@
         target_entity: data.data?.target_entity || "",
         is_active: !!data.data?.is_active,
       };
-      convertToFlow();
     } catch (error) {
       console.error("Failed to load workflow:", error);
     } finally {
       loading = false;
     }
-  }
-
-  function convertToFlow() {
-    if (!workflow) return;
-
-    nodes = workflow.state_links.map((state, index) => ({
-      id: state.id,
-      type: "default",
-      position: {
-        x: 100 + (index % 3) * 200,
-        y: 100 + Math.floor(index / 3) * 150,
-      },
-      data: { label: state.state_slug, isInitial: state.is_initial },
-    }));
-
-    edges = workflow.transitions.map((transition) => ({
-      id: transition.id,
-      source: transition.from_state_slug,
-      target: transition.to_state_slug,
-      label: transition.action_slug,
-    }));
   }
 
   async function save() {
@@ -165,13 +138,114 @@
     </div>
   </div>
 
-  {#if !isNew}
-    <div class="rounded-xl border" style="height: 600px;">
-      <SvelteFlow {nodes} {edges} fitView>
-        <Background />
-        <Controls />
-        <MiniMap />
-      </SvelteFlow>
+  {#if !isNew && workflow}
+    <div class="workflow-view">
+      <section class="workflow-panel">
+        <h2>States</h2>
+        <div class="workflow-states">
+          {#each workflow.state_links as state (state.id)}
+            <div class="workflow-state" class:is-initial={state.is_initial}>
+              <span>{state.state_slug}</span>
+              {#if state.is_initial}<small>Initial</small>{/if}
+            </div>
+          {:else}
+            <p class="workflow-empty">No states configured.</p>
+          {/each}
+        </div>
+      </section>
+
+      <section class="workflow-panel">
+        <h2>Transitions</h2>
+        <div class="workflow-transitions">
+          {#each workflow.transitions as transition (transition.id)}
+            <div class="workflow-transition">
+              <strong>{transition.from_state_slug}</strong>
+              <span class="workflow-action">{transition.action_slug}</span>
+              <strong>{transition.to_state_slug}</strong>
+              {#if transition.allowed_roles.length}
+                <small>{transition.allowed_roles.join(", ")}</small>
+              {/if}
+            </div>
+          {:else}
+            <p class="workflow-empty">No transitions configured.</p>
+          {/each}
+        </div>
+      </section>
     </div>
   {/if}
 </div>
+
+<style>
+  .workflow-view {
+    display: grid;
+    gap: 16px;
+  }
+  .workflow-panel {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    padding: 18px;
+  }
+  .workflow-panel h2 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    font-weight: 750;
+  }
+  .workflow-states {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .workflow-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: #fff;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .workflow-state.is-initial {
+    border-color: #9bb5f5;
+    background: #edf2ff;
+    color: #2457d6;
+  }
+  .workflow-state small {
+    color: var(--muted-foreground);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .workflow-transitions {
+    display: grid;
+    gap: 8px;
+  }
+  .workflow-transition {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+  .workflow-action {
+    border-radius: 999px;
+    background: var(--secondary);
+    padding: 4px 8px;
+    color: var(--secondary-foreground);
+    font-size: 11px;
+    font-weight: 750;
+  }
+  .workflow-transition small {
+    color: var(--muted-foreground);
+  }
+  .workflow-empty {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+</style>

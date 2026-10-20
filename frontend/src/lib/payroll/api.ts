@@ -1,4 +1,4 @@
-import { apiJSON, listEntity, listFiltered, getEntityMeta, getEntityRecord } from '$lib/api/index.js';
+import { apiJSON, listEntity, listFiltered, getEntityRecord } from '$lib/api/index.js';
 import type { PayrollEntry, PayrollLineItem, PayrollPeriod, PayrollSettings } from './types.js';
 
 export const payrollApi = {

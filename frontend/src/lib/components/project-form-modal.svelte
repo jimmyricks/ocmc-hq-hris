@@ -1,11 +1,11 @@
 <script lang="ts">
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import * as Field from "$lib/components/ui/field/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import { toast } from "svelte-sonner";
+  import * as Dialog from "$lib/components/native/dialog/index.js";
+  import * as Field from "$lib/components/native/field/index.js";
+  import * as Select from "$lib/components/native/select/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Input } from "$lib/components/native/input/index.js";
+  import { Textarea } from "$lib/components/native/textarea/index.js";
+  import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import { saveEntity } from "$lib/api/index.js";
   import { workspaceApi } from "$lib/workspaces/api.js";

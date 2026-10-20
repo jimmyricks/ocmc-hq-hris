@@ -9,9 +9,11 @@ class Project(BaseModel):
     __tablename__ = "project"
     
     name: Mapped[str] = mapped_column(String(255), nullable=True, default=None)
-    workspace_id: Mapped[str] = mapped_column(String(50), ForeignKey("workspace.id"), nullable=True, default=None)
-    team_id: Mapped[str | None] = mapped_column(
-        String(50), ForeignKey("workspace_team.id"), nullable=True, index=True
+    workspace_id: Mapped[str] = mapped_column(
+        String(50), ForeignKey("workspace.id"), nullable=True, default=None, index=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(50), ForeignKey("workspace_team.id"), nullable=True, default=None, index=True
     )
     description: Mapped[str] = mapped_column(Text, nullable=True, default=None)
     color: Mapped[str] = mapped_column(String(255), nullable=True, default="#3b82f6")

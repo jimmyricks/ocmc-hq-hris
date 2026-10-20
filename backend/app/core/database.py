@@ -9,7 +9,7 @@ Responsibility: Provide database connection and ORM configuration
 import time
 import logging
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
@@ -72,3 +72,56 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def verify_workspace_schema() -> None:
+    """Fail before create_all/seeders obscure an unapplied workspace migration."""
+    required_columns = {
+        "project": {"workspace_id", "team_id"},
+        "task": {"planned_start_at", "planned_end_at"},
+        "task_type": {"workspace_id"},
+        "payroll_line_item": {"workspace_id"},
+    }
+    async with engine.connect() as conn:
+        schema_state = await conn.run_sync(
+            lambda sync_conn: (
+                set(inspect(sync_conn).get_table_names()),
+                inspect(sync_conn).has_table("alembic_version"),
+            )
+        )
+        tables, is_versioned = schema_state
+        if not tables.intersection(required_columns):
+            return
+        missing = await conn.run_sync(
+            lambda sync_conn: {
+                table_name: sorted(
+                    column_name
+                    for column_name in columns
+                    if column_name
+                    not in {
+                        column["name"]
+                        for column in inspect(sync_conn).get_columns(table_name)
+                    }
+                )
+                for table_name, columns in required_columns.items()
+                if table_name in tables
+            }
+        )
+
+    missing = {table: columns for table, columns in missing.items() if columns}
+    if missing:
+        details = ", ".join(
+            f"{table}({', '.join(columns)})"
+            for table, columns in sorted(missing.items())
+        )
+        if is_versioned:
+            remediation = "Run `cd backend && .venv/bin/alembic upgrade head`."
+        else:
+            remediation = (
+                "This legacy database has no Alembic version marker; verify its "
+                "baseline before applying or stamping migrations."
+            )
+        raise RuntimeError(
+            f"Database schema is behind the workspace/planner migration: {details}. "
+            f"{remediation}"
+        )

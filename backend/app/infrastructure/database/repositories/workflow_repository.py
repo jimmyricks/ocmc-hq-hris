@@ -91,7 +91,7 @@ class WorkflowRepository:
                     roles,
                     list(user_roles),
                     created_by=str(doc.created_by) if doc else "",
-                    current_user_id=str(user.id),
+                    current_user_id=str(user.id) if user else "",
                 ):
                     available.append({
                         "action_slug": t.action_ref.slug,
@@ -133,7 +133,7 @@ class WorkflowRepository:
                     roles,
                     list(user_roles),
                     created_by=str(doc.created_by) if doc else "",
-                    current_user_id=str(user.id),
+                    current_user_id=str(user.id) if user else "",
                 ):
                     return True, t.to_state_link.state.slug, None
                 return False, None, f"You do not have permission to perform '{action}'. Required roles: {', '.join(roles)}"

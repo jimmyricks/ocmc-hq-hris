@@ -13,7 +13,8 @@
     {
       "name": "user_id",
       "label": "User",
-      "field_type": "string",
+      "field_type": "link",
+      "link_entity": "user",
       "required": false,
       "in_list_view": true
     },

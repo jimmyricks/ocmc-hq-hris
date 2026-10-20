@@ -2,7 +2,7 @@
   import { page } from "$app/state";
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
-  import { toast } from "svelte-sonner";
+  import { toast } from "$lib/notifications";
   import { payrollApi } from "$lib/payroll/api.js";
   import { taskApi } from "$lib/task-manager/api.js";
   import type {
@@ -15,15 +15,14 @@
   import { getToken } from "$lib/auth";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
 
-  import * as Card from "$lib/components/ui/card/index.js";
-  import * as Empty from "$lib/components/ui/empty/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
-  import * as Avatar from "$lib/components/ui/avatar/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
-  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+  import * as Card from "$lib/components/native/card/index.js";
+  import * as Empty from "$lib/components/native/empty/index.js";
+  import { Button } from "$lib/components/native/button/index.js";
+  import { Badge } from "$lib/components/native/badge/index.js";
+  import * as Avatar from "$lib/components/native/avatar/index.js";
+  import { Separator } from "$lib/components/native/separator/index.js";
+  import { Skeleton } from "$lib/components/native/skeleton/index.js";
   import DataTable from "./data-table.svelte";
-  import { columns, type LineItemRow } from "./columns.js";
 
   import CheckIcon from "@lucide/svelte/icons/check";
   import BanknoteIcon from "@lucide/svelte/icons/banknote";
@@ -52,6 +51,17 @@
   } as PayrollSettings);
   let loading = $state(true);
   let error = $state("");
+
+  type LineItemRow = {
+    id: string;
+    taskTitle: string;
+    taskKey?: string;
+    taskTypeName?: string;
+    submissionNotes?: string;
+    rate: string;
+    quantity: number;
+    amount: string;
+  };
 
   const ENTRY_STATUS_META: Record<
     string,
@@ -260,7 +270,7 @@
             </Empty.Header>
           </Empty.Root>
         {:else}
-          <DataTable {columns} data={tableData} />
+          <DataTable data={tableData} />
           <Separator class="my-4" />
           <div class="flex items-center justify-between">
             <span class="font-medium">Total</span>
