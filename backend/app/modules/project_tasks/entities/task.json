@@ -1,0 +1,115 @@
+{
+  "name": "task",
+  "label": "Task",
+  "module": "project_tasks",
+  "table_name": "task",
+  "title_field": "title",
+  "in_sidebar": true,
+  "icon": "clipboard-list",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "project_id",
+      "label": "Project",
+      "field_type": "link",
+      "link_entity": "project",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "task_type_id",
+      "label": "Task Type",
+      "field_type": "link",
+      "link_entity": "task_type",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "category_id",
+      "label": "Category",
+      "field_type": "link",
+      "link_entity": "task_category",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "title",
+      "label": "Title",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "description",
+      "label": "Description",
+      "field_type": "text"
+    },
+    {
+      "name": "priority",
+      "label": "Priority",
+      "field_type": "select",
+      "required": true,
+      "default": "medium",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "status",
+      "label": "Status",
+      "field_type": "select",
+      "required": true,
+      "default": "pending",
+      "options": [
+        "pending",
+        "in_progress",
+        "for_review",
+        "submitted",
+        "needs_revision",
+        "approved",
+        "closed",
+        "cancelled"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "due_date",
+      "label": "Due Date",
+      "field_type": "datetime"
+    },
+    {
+      "name": "planned_start_at",
+      "label": "Planned Start",
+      "field_type": "datetime"
+    },
+    {
+      "name": "planned_end_at",
+      "label": "Planned End",
+      "field_type": "datetime"
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read",
+      "create",
+      "update"
+    ]
+  }
+}

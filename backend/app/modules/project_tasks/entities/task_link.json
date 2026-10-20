@@ -1,0 +1,55 @@
+{
+  "name": "task_link",
+  "label": "Task Link",
+  "module": "project_tasks",
+  "table_name": "task_link",
+  "title_field": "label",
+  "in_sidebar": false,
+  "is_child_table": true,
+  "icon": "link",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "task_id",
+      "label": "Task",
+      "field_type": "link",
+      "link_entity": "task",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "url",
+      "label": "URL",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "label",
+      "label": "Label",
+      "field_type": "string",
+      "required": false,
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update",
+      "delete"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update",
+      "delete"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "name": "task_type",
+  "label": "Task Type",
+  "module": "project_tasks",
+  "table_name": "task_type",
+  "title_field": "name",
+  "in_sidebar": true,
+  "icon": "tags",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "name",
+      "label": "Task Type Name",
+      "description": "Unique identifier for this task type",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "workspace_id",
+      "label": "Workspace",
+      "field_type": "link",
+      "link_entity": "workspace",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "description",
+      "label": "Description",
+      "description": "Optional description of this task type",
+      "field_type": "text"
+    },
+    {
+      "name": "unit_rate",
+      "label": "Unit Rate",
+      "description": "Rate per unit for this task type",
+      "field_type": "currency",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "unit",
+      "label": "Unit",
+      "description": "Unit of measurement for pricing",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "per_task",
+        "per_hour",
+        "per_deliverable",
+        "per_unit"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "requires_approval",
+      "label": "Requires Approval",
+      "description": "Whether tasks of this type require approval before completion",
+      "field_type": "boolean",
+      "required": false,
+      "default": true,
+      "in_list_view": true
+    }
+  ],
+  "field_layout": [
+    [
+      "name"
+    ],
+    [
+      "description"
+    ],
+    [
+      "unit_rate",
+      "unit"
+    ],
+    [
+      "requires_approval"
+    ]
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "task_category",
+  "label": "Task Category",
+  "module": "project_tasks",
+  "table_name": "task_category",
+  "title_field": "name",
+  "in_sidebar": true,
+  "icon": "tags",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "name",
+      "label": "Name",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "color",
+      "label": "Color",
+      "field_type": "string",
+      "required": false,
+      "default": "#64748b",
+      "in_list_view": false
+    },
+    {
+      "name": "icon",
+      "label": "Icon",
+      "field_type": "string",
+      "required": false,
+      "default": "clipboard",
+      "in_list_view": false
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

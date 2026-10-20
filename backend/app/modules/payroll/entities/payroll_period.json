@@ -1,0 +1,87 @@
+{
+  "name": "payroll_period",
+  "label": "Payroll Period",
+  "module": "payroll",
+  "table_name": "payroll_period",
+  "title_field": "label",
+  "in_sidebar": true,
+  "icon": "calendar",
+  "group": "Payroll",
+  "fields": [
+    {
+      "name": "label",
+      "label": "Label",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "period_type",
+      "label": "Period Type",
+      "field_type": "select",
+      "required": true,
+      "default": "bi_monthly",
+      "options": [
+        "bi_monthly"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "start_date",
+      "label": "Start Date",
+      "field_type": "date",
+      "required": true
+    },
+    {
+      "name": "end_date",
+      "label": "End Date",
+      "field_type": "date",
+      "required": true
+    },
+    {
+      "name": "cutoff",
+      "label": "Cutoff Date",
+      "field_type": "date",
+      "required": true
+    },
+    {
+      "name": "status",
+      "label": "Status",
+      "field_type": "select",
+      "required": true,
+      "default": "open",
+      "options": [
+        "open",
+        "closed",
+        "paid"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "is_auto_generated",
+      "label": "Auto Generated",
+      "field_type": "boolean",
+      "required": true,
+      "default": false,
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "HR": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

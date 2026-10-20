@@ -1,0 +1,92 @@
+{
+  "name": "workflow_ledger",
+  "label": "Workflow Ledger",
+  "module": "core",
+  "table_name": "core_workflow_ledger",
+  "title_field": "entity_type",
+  "in_sidebar": true,
+  "icon": "git-branch",
+  "group": "System",
+  "naming": "WFL-{#####}",
+  "is_system": true,
+  "fields": [
+    {
+      "name": "entity_type",
+      "label": "Entity Type",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "record_id",
+      "label": "Record ID",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "previous_state",
+      "label": "Previous State",
+      "field_type": "string",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "next_state",
+      "label": "Next State",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "action",
+      "label": "Action",
+      "field_type": "string",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "changed_by",
+      "label": "Changed By",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "changed_at",
+      "label": "Changed At",
+      "field_type": "datetime",
+      "readonly": true,
+      "in_list_view": true
+    },
+    {
+      "name": "triggered_by_entity_type",
+      "label": "Triggered By Entity Type",
+      "field_type": "string",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "triggered_by_record_id",
+      "label": "Triggered By Record ID",
+      "field_type": "string",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "notes",
+      "label": "Notes",
+      "field_type": "text",
+      "required": false
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read"
+    ]
+  }
+}

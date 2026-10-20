@@ -1,0 +1,104 @@
+{
+  "name": "project",
+  "label": "Project",
+  "module": "project_tasks",
+  "table_name": "project",
+  "title_field": "name",
+  "in_sidebar": true,
+  "icon": "folder",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "name",
+      "label": "Project Name",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "workspace_id",
+      "label": "Workspace",
+      "field_type": "link",
+      "link_entity": "workspace",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "team_id",
+      "label": "Team",
+      "field_type": "link",
+      "link_entity": "workspace_team",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "description",
+      "label": "Description",
+      "field_type": "text"
+    },
+    {
+      "name": "color",
+      "label": "Color",
+      "field_type": "string",
+      "required": false,
+      "default": "#3b82f6",
+      "in_list_view": true
+    },
+    {
+      "name": "icon",
+      "label": "Icon",
+      "field_type": "string",
+      "required": false,
+      "default": "folder",
+      "in_list_view": true
+    },
+    {
+      "name": "manager_id",
+      "label": "Project Manager",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "status",
+      "label": "Status",
+      "field_type": "select",
+      "required": false,
+      "default": "active",
+      "options": [
+        "active",
+        "archived"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "start_date",
+      "label": "Start Date",
+      "field_type": "date"
+    },
+    {
+      "name": "end_date",
+      "label": "End Date",
+      "field_type": "date"
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "oc_comment",
+  "label": "Comment",
+  "module": "collaboration_audit",
+  "table_name": "oc_comment",
+  "title_field": "comment_text",
+  "in_sidebar": true,
+  "icon": "message-square",
+  "group": "Collaboration",
+  "fields": [
+    {
+      "name": "reference_entity",
+      "label": "Reference Entity",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "reference_id",
+      "label": "Reference ID",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "comment_by",
+      "label": "Comment By",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "comment_text",
+      "label": "Comment",
+      "field_type": "text",
+      "required": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update",
+      "delete"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read",
+      "create"
+    ]
+  }
+}

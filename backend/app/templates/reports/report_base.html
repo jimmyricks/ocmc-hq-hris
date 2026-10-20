@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Report{% endblock %}</title>
+    <style>
+      @page {
+        size: A4 portrait;
+        margin: 1.5cm;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 10pt;
+        color: #1a1a1a;
+        line-height: 1.3;
+        background: white;
+      }
+
+      .page {
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      /* Header */
+      .header {
+        background: #2b3a4a;
+        color: white;
+        padding: 12px 20px;
+        margin-bottom: 20px;
+        border-bottom: 3px solid #003366;
+      }
+
+      .header-row {
+        display: table;
+        width: 100%;
+      }
+
+      .header-left {
+        display: table-cell;
+        vertical-align: middle;
+        width: 200px;
+      }
+
+      .company-logo {
+        font-size: 14pt;
+        font-weight: bold;
+        color: white;
+      }
+
+      .header-right {
+        display: table-cell;
+        vertical-align: middle;
+        text-align: right;
+      }
+
+      .report-title {
+        font-size: 16pt;
+        font-weight: bold;
+        margin-bottom: 4px;
+      }
+
+      .report-meta {
+        font-size: 9pt;
+        color: #b0c4de;
+      }
+
+      /* Sections */
+      .section {
+        margin-bottom: 20px;
+        page-break-inside: avoid;
+      }
+
+      .section-title {
+        font-size: 12pt;
+        font-weight: bold;
+        color: #2b3a4a;
+        border-bottom: 2px solid #2b3a4a;
+        padding-bottom: 6px;
+        margin-bottom: 12px;
+      }
+
+      .subsection {
+        margin-bottom: 16px;
+        page-break-inside: avoid;
+      }
+
+      .subsection-title {
+        font-size: 11pt;
+        font-weight: bold;
+        color: #3b4a5a;
+        background: #f0f4f8;
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        border-left: 3px solid #2b3a4a;
+      }
+
+      /* Executive Summary */
+      .executive-summary {
+        background: #f7f9fc;
+        border-left: 4px solid #2b3a4a;
+        padding: 12px 16px;
+        font-size: 10pt;
+        line-height: 1.5;
+      }
+
+      /* KPI Bar */
+      .kpi-bar {
+        display: table;
+        width: 100%;
+        border: 1px solid #d0d5dd;
+        background: white;
+        margin-bottom: 20px;
+      }
+
+      .kpi-item {
+        display: table-cell;
+        width: 25%;
+        padding: 12px;
+        text-align: center;
+        border-right: 1px solid #d0d5dd;
+      }
+
+      .kpi-item:last-child {
+        border-right: none;
+      }
+
+      .kpi-label {
+        font-size: 8pt;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+      }
+
+      .kpi-value {
+        font-size: 18pt;
+        font-weight: bold;
+        color: #2b3a4a;
+      }
+
+      /* Tables */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 9pt;
+        margin-bottom: 0;
+      }
+
+      th {
+        background: #2b3a4a;
+        color: white;
+        font-weight: bold;
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 2px solid #003366;
+      }
+
+      td {
+        padding: 6px 10px;
+        border-bottom: 1px solid #d0d5dd;
+        vertical-align: top;
+      }
+
+      tr:nth-child(even) {
+        background: #f7f9fc;
+      }
+
+      /* Activity rows (nested) */
+      .activity-row {
+        background: #f0f5fa !important;
+        font-size: 8pt;
+      }
+
+      .activity-row td:first-child {
+        padding-left: 30px;
+      }
+
+      .activity-indent {
+        color: #999;
+      }
+
+      /* Status badges */
+      .status-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        font-size: 8pt;
+        font-weight: 500;
+        background: #e8f0f8;
+        color: #2b3a4a;
+        border-radius: 3px;
+        border: 1px solid #d0d5dd;
+      }
+
+      .overdue-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        font-size: 8pt;
+        font-weight: bold;
+        background: #fee2e2;
+        color: #dc2626;
+        border-radius: 3px;
+        border: 1px solid #fecaca;
+        margin-left: 4px;
+      }
+
+      /* Footer */
+      .footer {
+        position: fixed;
+        bottom: -1.5cm;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 8pt;
+        color: #666;
+        border-top: 1px solid #d0d5dd;
+        padding: 8px 0;
+        background: white;
+      }
+
+      .footer-content {
+        display: flex;
+        justify-content: space-between;
+        padding: 0 1.5cm;
+      }
+
+      /* Charts */
+      .charts {
+        margin-bottom: 20px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+      }
+
+      @media print {
+        .charts {
+          grid-template-columns: 1fr;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+        .charts canvas {
+          max-height: 300px !important;
+          width: 100% !important;
+          height: auto !important;
+        }
+        .footer {
+          position: fixed;
+          bottom: 0;
+        }
+      }
+
+      /* Print-specific adjustments */
+      @media print {
+        body {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+      }
+
+      /* Helper classes */
+      .text-right {
+        text-align: right;
+      }
+      .text-center {
+        text-align: center;
+      }
+      .font-bold {
+        font-weight: bold;
+      }
+      .text-muted {
+        color: #666;
+      }
+      .mb-2 {
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-row">
+          <div class="header-left">
+            <div class="company-logo">EAM System</div>
+          </div>
+          <div class="header-right">
+            <div class="report-title">
+              {% block report_title %}Report{% endblock %}
+            </div>
+            <div class="report-meta">{% block report_meta %}{% endblock %}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Content -->
+      <div class="content">{% block content %}{% endblock %}</div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <div class="footer-content">
+          <span>Confidential — For Internal Use Only</span>
+          <span>Generated: {{ generated_at }}</span>
+          <span
+            >Page <span class="page-number"></span> of
+            <span class="page-count"></span
+          ></span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

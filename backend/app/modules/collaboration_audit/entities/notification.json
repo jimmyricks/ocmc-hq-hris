@@ -1,0 +1,74 @@
+{
+  "name": "notification",
+  "label": "Notification",
+  "module": "collaboration_audit",
+  "table_name": "notification",
+  "title_field": "message",
+  "in_sidebar": true,
+  "icon": "bell",
+  "group": "Collaboration",
+  "fields": [
+    {
+      "name": "user_id",
+      "label": "User",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "reference_entity",
+      "label": "Reference Entity",
+      "field_type": "string",
+      "in_list_view": true
+    },
+    {
+      "name": "reference_id",
+      "label": "Reference ID",
+      "field_type": "string",
+      "in_list_view": true
+    },
+    {
+      "name": "type",
+      "label": "Type",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "task_assigned",
+        "submission_reviewed",
+        "revision_requested",
+        "payroll_ready"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "message",
+      "label": "Message",
+      "field_type": "text",
+      "required": true
+    },
+    {
+      "name": "is_read",
+      "label": "Is Read",
+      "field_type": "boolean",
+      "required": true,
+      "default": false,
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update",
+      "delete"
+    ],
+    "User": [
+      "read",
+      "update"
+    ]
+  }
+}

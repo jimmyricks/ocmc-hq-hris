@@ -1,0 +1,95 @@
+{
+  "name": "task_assignment",
+  "label": "Task Assignment",
+  "module": "project_tasks",
+  "table_name": "task_assignment",
+  "title_field": "id",
+  "in_sidebar": false,
+  "is_child_table": true,
+  "icon": "user-check",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "task_id",
+      "label": "Task",
+      "field_type": "link",
+      "link_entity": "task",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "idx",
+      "label": "Index",
+      "field_type": "int",
+      "required": false,
+      "default": 0,
+      "in_list_view": true
+    },
+    {
+      "name": "user_id",
+      "label": "Assigned To",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "assigned_by",
+      "label": "Assigned By",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "assigned_at",
+      "label": "Assigned At",
+      "field_type": "datetime",
+      "required": false
+    },
+    {
+      "name": "unassigned_at",
+      "label": "Unassigned At",
+      "field_type": "datetime"
+    },
+    {
+      "name": "is_active",
+      "label": "Active",
+      "field_type": "boolean",
+      "required": false,
+      "default": true,
+      "in_list_view": true
+    },
+    {
+      "name": "status",
+      "label": "Status",
+      "field_type": "select",
+      "required": false,
+      "default": "active",
+      "options": [
+        "active",
+        "completed",
+        "reassigned"
+      ],
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

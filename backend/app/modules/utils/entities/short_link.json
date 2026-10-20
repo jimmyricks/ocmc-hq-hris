@@ -1,0 +1,81 @@
+{
+  "name": "short_link",
+  "label": "Short Link",
+  "module": "utils",
+  "table_name": "short_link",
+  "title_field": "title",
+  "in_sidebar": false,
+  "naming": {
+    "enabled": true,
+    "prefix": "SL",
+    "digits": 5
+  },
+  "fields": [
+    {
+      "name": "slug",
+      "label": "Slug",
+      "field_type": "string",
+      "required": true,
+      "unique": true,
+      "in_list_view": true
+    },
+    {
+      "name": "destination_url",
+      "label": "Destination URL",
+      "field_type": "text",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "title",
+      "label": "Title",
+      "field_type": "string",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "is_active",
+      "label": "Active",
+      "field_type": "boolean",
+      "default": true,
+      "in_list_view": true
+    },
+    {
+      "name": "expires_at",
+      "label": "Expires At",
+      "field_type": "datetime"
+    },
+    {
+      "name": "password_hash",
+      "label": "Password Hash",
+      "field_type": "text"
+    },
+    {
+      "name": "show_preview",
+      "label": "Show Preview Interstitial",
+      "field_type": "boolean",
+      "default": false,
+      "in_list_view": true
+    },
+    {
+      "name": "click_count",
+      "label": "Click Count",
+      "field_type": "int",
+      "default": 0,
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

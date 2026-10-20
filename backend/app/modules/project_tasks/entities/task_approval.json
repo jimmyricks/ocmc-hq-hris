@@ -1,0 +1,78 @@
+{
+  "name": "task_approval",
+  "label": "Task Approval",
+  "module": "project_tasks",
+  "table_name": "task_approval",
+  "title_field": "id",
+  "in_sidebar": false,
+  "is_child_table": true,
+  "icon": "check-circle",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "task_submission_id",
+      "label": "Task Submission",
+      "field_type": "link",
+      "link_entity": "task_submission",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "idx",
+      "label": "Index",
+      "field_type": "int",
+      "required": true,
+      "default": 0,
+      "in_list_view": true
+    },
+    {
+      "name": "approver_id",
+      "label": "Approver",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "decision",
+      "label": "Decision",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "approved",
+        "rejected",
+        "needs_revision"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "remarks",
+      "label": "Remarks",
+      "field_type": "text"
+    },
+    {
+      "name": "decided_at",
+      "label": "Decided At",
+      "field_type": "datetime",
+      "required": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

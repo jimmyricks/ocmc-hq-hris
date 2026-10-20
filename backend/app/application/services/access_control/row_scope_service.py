@@ -1,0 +1,577 @@
+"""Row scope enforcement service.
+
+Applies `row_scope` filters to SQLAlchemy queries and single-record access checks.
+The service is used by list, detail, options, tree, and child endpoints.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import or_, select
+
+from app.core.constants.permissions import (
+    ROW_SCOPE_ALL,
+    ROW_SCOPE_OWNER_ONLY,
+    ROW_SCOPE_OWNER_OR_ASSIGNED,
+    RESERVED_ROLE_OWNER,
+)
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+
+
+class RowScopeConfigError(ValueError):
+    """Raised when the configured owner field cannot be resolved on the model."""
+
+
+class RowScopeService:
+    """Apply row-scope filters to queries and single-record access checks."""
+
+    def __init__(
+        self,
+        db,
+        rbac_service,
+        meta_registry,
+        workflow_repo,
+        requested_workspace_id: str | None = None,
+    ):
+        self.db = db
+        self.rbac = rbac_service
+        self.meta_registry = meta_registry
+        self.workflow_repo = workflow_repo
+        self.requested_workspace_id = requested_workspace_id
+
+    async def apply_scope_to_query(
+        self,
+        query,
+        model,
+        entity: str,
+        user_id: str,
+        role_ids: list[str],
+        role_names: list[str],
+        is_superuser: bool,
+    ):
+        """Add row-scope WHERE clauses to a query."""
+        if entity == "payroll_line_item":
+            from app.modules.workspaces.services import WorkspaceService
+
+            if WorkspaceService.is_payroll_admin(role_names, is_superuser):
+                return query
+        workspace_entity = self._is_workspace_entity(entity, model)
+        query = await self._apply_workspace_scope(
+            query, model, entity, user_id, role_names, is_superuser
+        )
+        if is_superuser or workspace_entity:
+            return query
+
+        scopes = await self.rbac.get_row_scope(role_ids, entity)
+        if ROW_SCOPE_ALL in scopes:
+            return query
+
+        owner_field = self.meta_registry.get_owner_field(entity)
+        owner_col = getattr(model, owner_field, None)
+        if owner_col is None and (
+            ROW_SCOPE_OWNER_ONLY in scopes or ROW_SCOPE_OWNER_OR_ASSIGNED in scopes
+        ):
+            raise RowScopeConfigError(
+                f"Entity '{entity}' row scope uses owner field '{owner_field}' "
+                f"but that column is not present on the model."
+            )
+
+        owner_condition = owner_col == user_id if owner_col is not None else None
+
+        conditions = []
+        if owner_condition is not None and ROW_SCOPE_OWNER_ONLY in scopes:
+            conditions.append(owner_condition)
+
+        if ROW_SCOPE_OWNER_OR_ASSIGNED in scopes:
+            if owner_condition is not None:
+                conditions.append(owner_condition)
+            allowed_states = await self._get_allowed_states_for_user(entity, role_names)
+            if allowed_states and hasattr(model, "workflow_state"):
+                conditions.append(getattr(model, "workflow_state").in_(allowed_states))
+
+        if not conditions:
+            return query
+        return query.where(or_(*conditions))
+
+    async def can_access_record(
+        self,
+        record,
+        entity: str,
+        user_id: str,
+        role_ids: list[str],
+        role_names: list[str],
+        is_superuser: bool,
+    ) -> bool:
+        """Check if a single record is visible to the user under row scope."""
+        if entity == "payroll_line_item":
+            from app.modules.workspaces.services import WorkspaceService
+
+            if WorkspaceService.is_payroll_admin(role_names, is_superuser):
+                return True
+        workspace_entity = self._is_workspace_entity(entity, record.__class__)
+        if workspace_entity:
+            model = record.__class__
+            scoped = await self._apply_workspace_scope(
+                select(model.id),
+                model,
+                entity,
+                user_id,
+                role_names,
+                is_superuser,
+            )
+            result = await self.db.execute(scoped.where(model.id == record.id))
+            if result.scalar_one_or_none() is None:
+                return False
+            return True
+        elif is_superuser:
+            return True
+
+        if is_superuser:
+            return True
+
+        scopes = await self.rbac.get_row_scope(role_ids, entity)
+        if ROW_SCOPE_ALL in scopes:
+            return True
+
+        owner_field = self.meta_registry.get_owner_field(entity)
+        owner_value = getattr(record, owner_field, None)
+
+        if owner_value == user_id:
+            return True
+
+        if ROW_SCOPE_OWNER_OR_ASSIGNED in scopes:
+            allowed_states = await self._get_allowed_states_for_user(entity, role_names)
+            if allowed_states and hasattr(record, "workflow_state"):
+                return getattr(record, "workflow_state") in allowed_states
+
+        return False
+
+    @staticmethod
+    def _is_workspace_entity(entity: str, model: Any) -> bool:
+        return entity in {
+            "workspace",
+            "workspace_membership",
+            "workspace_team",
+            "workspace_resource",
+            "project",
+            "project_member",
+            "task",
+            "task_assignment",
+            "task_submission",
+            "task_approval",
+            "task_link",
+            "task_type",
+            "planner_event",
+            "schedule_series",
+            "schedule_occurrence",
+            "resource_booking",
+            "workspace_team",
+        } or hasattr(model, "workspace_id")
+
+    async def can_read_entity(
+        self,
+        entity: str,
+        user_id: str,
+        role_names: list[str],
+        is_superuser: bool,
+    ) -> bool:
+        if entity == "workspace_membership":
+            return False
+        if not self._is_workspace_entity(entity, object()):
+            return False
+        from app.modules.workspaces.services import WorkspaceService
+
+        try:
+            await WorkspaceService.resolve_context(
+                self.db,
+                user_id,
+                role_names,
+                is_superuser,
+                self.requested_workspace_id,
+            )
+            return True
+        except (BadRequestError, ForbiddenError, NotFoundError):
+            return False
+
+    async def _apply_workspace_scope(
+        self,
+        query,
+        model: Any,
+        entity: str,
+        user_id: str,
+        role_names: list[str],
+        is_superuser: bool,
+    ):
+        if not self._is_workspace_entity(entity, model):
+            return query
+
+        from app.modules.project_tasks.models import (
+            Project,
+            ProjectMember,
+            Task,
+            TaskApproval,
+            TaskAssignment,
+            TaskLink,
+            TaskSubmission,
+        )
+        from app.modules.workspaces.models import (
+            ScheduleOccurrence,
+            ScheduleSeries,
+            Workspace,
+            WorkspaceMembership,
+        )
+        from app.modules.workspaces.services import WorkspaceService
+
+        context = await WorkspaceService.resolve_context(
+            self.db,
+            user_id,
+            role_names,
+            is_superuser,
+            self.requested_workspace_id,
+        )
+        if context.is_global:
+            return query
+        if not context.workspace_ids:
+            return query.where(False)
+
+        workspace_ids = context.workspace_ids
+        is_admin = WorkspaceService.is_admin(role_names, is_superuser)
+        member_project_ids = select(ProjectMember.project_id).where(
+            ProjectMember.user_id == user_id,
+            ProjectMember.is_active.is_(True),
+        )
+        project_condition = Project.workspace_id.in_(workspace_ids)
+        if not is_admin:
+            project_condition = or_(
+                project_condition,
+                Project.manager_id == user_id,
+                Project.id.in_(member_project_ids),
+            )
+        visible_projects = select(Project.id).where(project_condition)
+
+        if entity == "workspace":
+            return query.where(Workspace.id.in_(workspace_ids))
+        if entity == "workspace_membership":
+            return query.where(
+                WorkspaceMembership.workspace_id.in_(workspace_ids),
+                WorkspaceMembership.user_id == user_id,
+            )
+        if entity == "project":
+            condition = Project.workspace_id.in_(workspace_ids)
+            if not is_admin:
+                condition = or_(
+                    condition,
+                    Project.manager_id == user_id,
+                    Project.id.in_(member_project_ids),
+                )
+            return query.where(condition)
+        if entity == "project_member":
+            return query.where(ProjectMember.project_id.in_(visible_projects))
+        if entity == "task":
+            return query.where(Task.project_id.in_(visible_projects))
+
+        task_ids = select(Task.id).where(Task.project_id.in_(visible_projects))
+        if entity == "task_assignment":
+            return query.where(TaskAssignment.task_id.in_(task_ids))
+        if entity == "task_submission":
+            assignment_ids = select(TaskAssignment.id).where(
+                TaskAssignment.task_id.in_(task_ids)
+            )
+            return query.where(TaskSubmission.task_assignment_id.in_(assignment_ids))
+        if entity == "task_approval":
+            assignment_ids = select(TaskAssignment.id).where(
+                TaskAssignment.task_id.in_(task_ids)
+            )
+            submission_ids = select(TaskSubmission.id).where(
+                TaskSubmission.task_assignment_id.in_(assignment_ids)
+            )
+            return query.where(TaskApproval.task_submission_id.in_(submission_ids))
+        if entity == "task_link":
+            return query.where(TaskLink.task_id.in_(task_ids))
+        if entity == "schedule_occurrence":
+            series_ids = select(ScheduleSeries.id).where(
+                ScheduleSeries.workspace_id.in_(workspace_ids)
+            )
+            if not is_admin:
+                series_ids = select(ScheduleSeries.id).where(
+                    or_(
+                        ScheduleSeries.workspace_id.in_(workspace_ids),
+                        ScheduleSeries.project_id.in_(visible_projects),
+                    )
+                )
+            return query.where(ScheduleOccurrence.series_id.in_(series_ids))
+
+        workspace_column = getattr(model, "workspace_id", None)
+        if workspace_column is not None:
+            condition = workspace_column.in_(workspace_ids)
+            if entity in {"planner_event", "schedule_series"} and not is_admin:
+                project_column = getattr(model, "project_id", None)
+                if project_column is not None:
+                    condition = or_(condition, project_column.in_(visible_projects))
+            return query.where(condition)
+        return query.where(False)
+
+    async def _workspace_role(
+        self,
+        workspace_id: str,
+        user_id: str,
+        role_names: list[str],
+        is_superuser: bool,
+    ) -> str | None:
+        from app.modules.workspaces.models import WorkspaceMembership
+        from app.modules.workspaces.services import WorkspaceService
+
+        if WorkspaceService.is_admin(role_names, is_superuser):
+            return "administrator"
+        return await self.db.scalar(
+            select(WorkspaceMembership.membership_role).where(
+                WorkspaceMembership.workspace_id == workspace_id,
+                WorkspaceMembership.user_id == user_id,
+                WorkspaceMembership.is_active.is_(True),
+            )
+        )
+
+    async def prepare_create_data(
+        self,
+        entity: str,
+        data: dict[str, Any],
+        user: Any,
+    ) -> dict[str, Any]:
+        """Assign and validate workspace ownership for tenant-owned generic creates."""
+        if entity == "payroll_line_item":
+            raise ForbiddenError("Payroll line items are managed by payroll generation")
+        tenant_root_entities = {
+            "project",
+            "task_type",
+            "planner_event",
+            "schedule_series",
+            "workspace_resource",
+            "workspace_team",
+            "resource_booking",
+        }
+        if entity in {"task_assignment", "task_submission", "task_approval"}:
+            raise ForbiddenError("Use the task workflow endpoint for this record")
+        if entity not in tenant_root_entities | {"task", "project_member", "task_link"}:
+            return data
+
+        from app.core.framework.models.auth import User
+        from app.modules.project_tasks.models import Project, ProjectMember, TaskType
+        from app.modules.workspaces.models import Workspace, WorkspaceTeam
+        from app.modules.workspaces.services import WorkspaceService
+
+        context = await WorkspaceService.resolve_context(
+            self.db,
+            user.id,
+            user.roles,
+            user.is_superuser,
+            self.requested_workspace_id,
+        )
+        is_admin = WorkspaceService.is_admin(user.roles, user.is_superuser)
+        if entity in tenant_root_entities:
+            target_workspace_id = data.get("workspace_id") or context.active_workspace_id
+            if not target_workspace_id:
+                raise BadRequestError("Select a workspace before creating this record")
+            workspace = await self.db.get(Workspace, target_workspace_id)
+            if not workspace or not workspace.is_active:
+                raise NotFoundError("Workspace", target_workspace_id)
+            if not is_admin and target_workspace_id not in context.workspace_ids:
+                raise ForbiddenError("You cannot create records in this workspace")
+            if not is_admin and await self._workspace_role(
+                target_workspace_id, user.id, user.roles, user.is_superuser
+            ) != "supervisor":
+                raise ForbiddenError("Only workspace supervisors can create this record")
+            data["workspace_id"] = target_workspace_id
+            team_id = data.get("team_id")
+            if team_id:
+                team = await self.db.get(WorkspaceTeam, team_id)
+                if not team or team.workspace_id != target_workspace_id:
+                    raise BadRequestError("Team must belong to the selected workspace")
+            return data
+
+        if entity == "task":
+            project = await self.db.get(Project, data.get("project_id"))
+            if not project:
+                raise NotFoundError("Project", data.get("project_id"))
+            if not is_admin and (
+                project.workspace_id != context.active_workspace_id
+                or await self._workspace_role(
+                    project.workspace_id, user.id, user.roles, user.is_superuser
+                )
+                != "supervisor"
+            ):
+                raise ForbiddenError(
+                    "Only supervisors in the project's workspace can create tasks"
+                )
+            task_type = await self.db.get(TaskType, data.get("task_type_id"))
+            if task_type and project.workspace_id and task_type.workspace_id != project.workspace_id:
+                raise BadRequestError("Task type must belong to the project's workspace")
+            return data
+
+        if entity == "project_member":
+            project = await self.db.get(Project, data.get("project_id"))
+            if not project:
+                raise NotFoundError("Project", data.get("project_id"))
+            member = await self.db.get(User, data.get("user_id"))
+            if not member or not member.is_active:
+                raise NotFoundError("Active user", data.get("user_id"))
+            if not is_admin and (
+                project.workspace_id != context.active_workspace_id
+                or await self._workspace_role(
+                    project.workspace_id, user.id, user.roles, user.is_superuser
+                )
+                != "supervisor"
+            ):
+                raise ForbiddenError(
+                    "Only workspace supervisors can manage project membership"
+                )
+            existing = await self.db.scalar(
+                select(ProjectMember.id).where(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_id == member.id,
+                    ProjectMember.is_active.is_(True),
+                )
+            )
+            if existing:
+                raise BadRequestError("User is already an active project member")
+        if entity == "task_link":
+            from app.modules.project_tasks.models import Task
+
+            task = await self.db.get(Task, data.get("task_id"))
+            if not task:
+                raise NotFoundError("Task", data.get("task_id"))
+            project = await self.db.get(Project, task.project_id)
+            if not project:
+                raise NotFoundError("Project", task.project_id)
+            if not is_admin:
+                membership = await self.db.scalar(
+                    select(ProjectMember.id).where(
+                        ProjectMember.project_id == project.id,
+                        ProjectMember.user_id == user.id,
+                        ProjectMember.is_active.is_(True),
+                    )
+                )
+                if (
+                    project.workspace_id not in context.workspace_ids
+                    and not membership
+                ):
+                    raise ForbiddenError("You cannot add links to this task")
+        return data
+
+    async def authorize_record_write(
+        self,
+        entity: str,
+        record: Any,
+        data: dict[str, Any],
+        user: Any,
+    ) -> None:
+        if not self._is_workspace_entity(entity, record.__class__):
+            return
+        if entity in {"task_assignment", "task_submission", "task_approval"}:
+            raise ForbiddenError("Use the task workflow endpoint for this record")
+        if entity == "payroll_line_item":
+            raise ForbiddenError("Payroll line items are managed by payroll generation")
+
+        from app.modules.project_tasks.models import Project, ProjectMember
+        from app.modules.workspaces.services import WorkspaceService
+
+        context = await WorkspaceService.resolve_context(
+            self.db,
+            user.id,
+            user.roles,
+            user.is_superuser,
+            self.requested_workspace_id,
+        )
+        if WorkspaceService.is_admin(user.roles, user.is_superuser):
+            if entity == "project" and data.get(
+                "workspace_id", record.workspace_id
+            ) != record.workspace_id:
+                raise ForbiddenError("Use the audited workspace reassignment operation")
+            return
+
+        workspace_id = getattr(record, "workspace_id", None)
+        if entity in {"task", "project_member", "task_link"}:
+            from app.modules.project_tasks.models import Task, TaskLink
+
+            if isinstance(record, TaskLink):
+                task = await self.db.get(Task, record.task_id)
+                project = await self.db.get(Project, task.project_id) if task else None
+            else:
+                project = await self.db.get(Project, record.project_id)
+            workspace_id = project.workspace_id if project else None
+            if entity == "task_link" and project:
+                membership = await self.db.scalar(
+                    select(ProjectMember.id).where(
+                        ProjectMember.project_id == project.id,
+                        ProjectMember.user_id == user.id,
+                        ProjectMember.is_active.is_(True),
+                    )
+                )
+                if project.workspace_id not in context.workspace_ids and not membership:
+                    raise ForbiddenError("You cannot modify links on this task")
+                return
+        if not workspace_id or workspace_id != context.active_workspace_id:
+            raise ForbiddenError("Changes are limited to the active workspace")
+        if await self._workspace_role(
+            workspace_id, user.id, user.roles, user.is_superuser
+        ) != "supervisor":
+            raise ForbiddenError("Only workspace supervisors can modify this record")
+        if entity == "project" and data.get(
+            "workspace_id", record.workspace_id
+        ) != record.workspace_id:
+            raise ForbiddenError("Project workspace cannot be changed directly")
+        if entity == "project" and data.get("team_id"):
+            from app.modules.workspaces.models import WorkspaceTeam
+
+            team = await self.db.get(WorkspaceTeam, data["team_id"])
+            if not team or team.workspace_id != workspace_id:
+                raise BadRequestError("Team must belong to the project's workspace")
+        if entity == "task" and data.get("project_id", record.project_id) != record.project_id:
+            target = await self.db.get(Project, data["project_id"])
+            if not target or target.workspace_id != workspace_id:
+                raise ForbiddenError("Tasks cannot be moved between workspaces")
+
+    def authorize_collection_action(self, entity: str, user: Any) -> None:
+        if not self._is_workspace_entity(entity, object()):
+            return
+        from app.modules.workspaces.services import WorkspaceService
+
+        if not WorkspaceService.is_admin(user.roles, user.is_superuser):
+            raise ForbiddenError("Bulk actions are not available for workspace records")
+
+    async def authorize_create_data(
+        self, entity: str, data: dict[str, Any], user: Any
+    ) -> dict[str, Any]:
+        return await self.prepare_create_data(entity, data, user)
+
+    async def _get_allowed_states_for_user(
+        self, entity: str, role_names: list[str]
+    ) -> set[str]:
+        """Return states that have an outgoing transition allowed for any of the user's roles.
+
+        The pseudo-role "Owner" is ignored because the ``created_by = :user_id`` check
+        already covers record ownership.
+        """
+        workflow = await self.workflow_repo.get_workflow(entity)
+        if not workflow:
+            return set()
+
+        transitions = []
+        seen = set()
+        for state_link in workflow.state_links:
+            for transition in state_link.outgoing_transitions:
+                if transition.id not in seen:
+                    transitions.append(transition)
+                    seen.add(transition.id)
+
+        user_roles = set(role_names)
+        owner_aliases = {RESERVED_ROLE_OWNER, "Owner"}
+        allowed_states = set()
+        for transition in transitions:
+            allowed = set(transition.get_allowed_roles())
+            # The owner pseudo-role is handled by the `created_by = :user_id` clause,
+            # so it should not add states for non-owners.
+            allowed -= owner_aliases
+            if user_roles.intersection(allowed):
+                allowed_states.add(transition.from_state_link.state.slug)
+        return allowed_states

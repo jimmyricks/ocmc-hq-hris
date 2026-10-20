@@ -1,0 +1,48 @@
+{
+  "name": "workspace",
+  "label": "Workspace",
+  "module": "workspaces",
+  "table_name": "workspace",
+  "title_field": "name",
+  "in_sidebar": false,
+  "fields": [
+    {
+      "name": "name",
+      "label": "Name",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "slug",
+      "label": "Slug",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "color",
+      "label": "Calendar Color",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "timezone",
+      "label": "Timezone",
+      "field_type": "string",
+      "required": true
+    },
+    {
+      "name": "is_active",
+      "label": "Active",
+      "field_type": "boolean",
+      "required": true,
+      "default": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": ["*"],
+    "Administrator": ["read"]
+  }
+}

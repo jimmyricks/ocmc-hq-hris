@@ -1,0 +1,75 @@
+{
+  "name": "project_member",
+  "label": "Project Member",
+  "module": "project_tasks",
+  "table_name": "project_member",
+  "title_field": "id",
+  "in_sidebar": false,
+  "is_child_table": true,
+  "icon": "users",
+  "group": "Projects",
+  "fields": [
+    {
+      "name": "project_id",
+      "label": "Project",
+      "field_type": "link",
+      "link_entity": "project",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "user_id",
+      "label": "Member",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "role",
+      "label": "Role",
+      "field_type": "select",
+      "required": false,
+      "default": "member",
+      "options": [
+        "manager",
+        "member"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "joined_at",
+      "label": "Joined At",
+      "field_type": "datetime",
+      "required": false
+    },
+    {
+      "name": "is_active",
+      "label": "Active",
+      "field_type": "boolean",
+      "required": false,
+      "default": true,
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update",
+      "delete"
+    ],
+    "ProjectManager": [
+      "read",
+      "create",
+      "update",
+      "delete"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

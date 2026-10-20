@@ -1,0 +1,39 @@
+{
+  "name": "department",
+  "label": "Department",
+  "module": "identity_hr",
+  "table_name": "department",
+  "title_field": "name",
+  "in_sidebar": true,
+  "icon": "building",
+  "group": "HR",
+  "fields": [
+    {
+      "name": "name",
+      "label": "Department Name",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "head_user_id",
+      "label": "Head of Department",
+      "field_type": "link",
+      "link_entity": "user",
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

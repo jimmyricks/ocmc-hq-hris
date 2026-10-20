@@ -1,0 +1,92 @@
+{
+  "name": "payroll_settings",
+  "label": "Payroll Settings",
+  "module": "payroll",
+  "table_name": "payroll_settings",
+  "title_field": "currency",
+  "in_sidebar": false,
+  "icon": "settings",
+  "group": "Payroll",
+  "fields": [
+    {
+      "name": "currency",
+      "label": "Default Currency",
+      "field_type": "select",
+      "required": true,
+      "default": "PHP",
+      "options": [
+        "PHP"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "cutoff_rule",
+      "label": "Cutoff Rule",
+      "field_type": "select",
+      "required": true,
+      "default": "bi_monthly",
+      "options": [
+        "bi_monthly",
+        "monthly",
+        "weekly"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "default_period_start_day",
+      "label": "Default Period Start Day",
+      "field_type": "int",
+      "required": true,
+      "default": 1
+    },
+    {
+      "name": "default_period_end_day",
+      "label": "Default Period End Day",
+      "field_type": "int",
+      "required": true,
+      "default": 15
+    },
+    {
+      "name": "auto_approve_threshold",
+      "label": "Auto-approve Threshold",
+      "field_type": "currency",
+      "required": false,
+      "default": 0,
+      "in_list_view": true
+    },
+    {
+      "name": "require_hr_approval",
+      "label": "Require HR Approval",
+      "field_type": "boolean",
+      "required": true,
+      "default": true,
+      "in_list_view": true
+    },
+    {
+      "name": "notify_users_on_payment",
+      "label": "Notify Users on Payment",
+      "field_type": "boolean",
+      "required": true,
+      "default": true,
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "HR": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

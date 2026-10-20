@@ -1,0 +1,106 @@
+{
+  "name": "qr_code",
+  "label": "QR Code",
+  "module": "utils",
+  "table_name": "qr_code",
+  "title_field": "id",
+  "in_sidebar": false,
+  "naming": {
+    "enabled": true,
+    "prefix": "QR",
+    "digits": 5
+  },
+  "fields": [
+    {
+      "name": "source_type",
+      "label": "Source Type",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "url",
+        "text",
+        "short_link"
+      ],
+      "default": "url",
+      "in_list_view": true
+    },
+    {
+      "name": "source_value",
+      "label": "Source Value",
+      "field_type": "text",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "short_link_id",
+      "label": "Short Link",
+      "field_type": "link",
+      "link_entity": "short_link",
+      "required": false,
+      "in_list_view": true
+    },
+    {
+      "name": "error_correction_level",
+      "label": "Error Correction Level",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "L",
+        "M",
+        "Q",
+        "H"
+      ],
+      "default": "M",
+      "in_list_view": true
+    },
+    {
+      "name": "size",
+      "label": "Size",
+      "field_type": "int",
+      "required": true,
+      "default": 256,
+      "in_list_view": true
+    },
+    {
+      "name": "format",
+      "label": "Format",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "svg",
+        "png"
+      ],
+      "default": "svg",
+      "in_list_view": true
+    },
+    {
+      "name": "fg_color",
+      "label": "Foreground Color",
+      "field_type": "string",
+      "required": true,
+      "default": "#000000",
+      "in_list_view": true
+    },
+    {
+      "name": "bg_color",
+      "label": "Background Color",
+      "field_type": "string",
+      "required": true,
+      "default": "#ffffff",
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

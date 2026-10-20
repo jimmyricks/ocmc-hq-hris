@@ -1,0 +1,93 @@
+{
+  "name": "payroll_entry",
+  "label": "Payroll Entry",
+  "module": "payroll",
+  "table_name": "payroll_entry",
+  "title_field": "id",
+  "in_sidebar": true,
+  "icon": "wallet",
+  "group": "Payroll",
+  "fields": [
+    {
+      "name": "payroll_period_id",
+      "label": "Payroll Period",
+      "field_type": "link",
+      "link_entity": "payroll_period",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "user_id",
+      "label": "User",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "total_tasks",
+      "label": "Total Tasks",
+      "field_type": "int",
+      "required": true,
+      "default": 0,
+      "in_list_view": true
+    },
+    {
+      "name": "total_amount",
+      "label": "Total Amount",
+      "field_type": "currency",
+      "required": true,
+      "default": 0,
+      "in_list_view": true
+    },
+    {
+      "name": "status",
+      "label": "Status",
+      "field_type": "select",
+      "required": true,
+      "default": "draft",
+      "options": [
+        "draft",
+        "under_review",
+        "approved",
+        "paid"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "generated_at",
+      "label": "Generated At",
+      "field_type": "datetime",
+      "required": true
+    },
+    {
+      "name": "approved_by",
+      "label": "Approved By",
+      "field_type": "link",
+      "link_entity": "user"
+    },
+    {
+      "name": "approved_at",
+      "label": "Approved At",
+      "field_type": "datetime"
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "HR": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "name": "invoice",
+  "label": "Invoice",
+  "module": "payroll",
+  "table_name": "invoice",
+  "title_field": "invoice_number",
+  "in_sidebar": true,
+  "icon": "receipt",
+  "group": "Payroll",
+  "fields": [
+    {
+      "name": "invoice_number",
+      "label": "Invoice Number",
+      "field_type": "str",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "payroll_entry_id",
+      "label": "Payroll Entry",
+      "field_type": "link",
+      "link_entity": "payroll_entry",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "payroll_period_id",
+      "label": "Payroll Period",
+      "field_type": "link",
+      "link_entity": "payroll_period",
+      "in_list_view": true
+    },
+    {
+      "name": "user_id",
+      "label": "User",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "total_tasks",
+      "label": "Total Tasks",
+      "field_type": "int",
+      "in_list_view": true
+    },
+    {
+      "name": "total_amount",
+      "label": "Total Amount",
+      "field_type": "currency",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "currency",
+      "label": "Currency",
+      "field_type": "select",
+      "default": "PHP",
+      "options": [
+        "PHP"
+      ]
+    },
+    {
+      "name": "status",
+      "label": "Status",
+      "field_type": "select",
+      "required": true,
+      "default": "issued",
+      "options": [
+        "issued",
+        "paid",
+        "void"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "issued_at",
+      "label": "Issued At",
+      "field_type": "datetime"
+    },
+    {
+      "name": "paid_at",
+      "label": "Paid At",
+      "field_type": "datetime"
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read",
+      "create",
+      "update"
+    ],
+    "HR": [
+      "read",
+      "create",
+      "update"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

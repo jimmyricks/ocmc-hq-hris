@@ -1,0 +1,65 @@
+{
+  "name": "short_link_click",
+  "label": "Short Link Click",
+  "module": "utils",
+  "table_name": "short_link_click",
+  "title_field": "id",
+  "in_sidebar": false,
+  "is_child_table": true,
+  "naming": {
+    "enabled": true,
+    "prefix": "SLC",
+    "digits": 5
+  },
+  "fields": [
+    {
+      "name": "short_link_id",
+      "label": "Short Link",
+      "field_type": "link",
+      "link_entity": "short_link",
+      "parent_entity": "short_link",
+      "child_parent_fk_field": "short_link_id",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "clicked_at",
+      "label": "Clicked At",
+      "field_type": "datetime",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "ip_hash",
+      "label": "IP Hash",
+      "field_type": "string",
+      "required": false
+    },
+    {
+      "name": "user_agent",
+      "label": "User Agent",
+      "field_type": "text"
+    },
+    {
+      "name": "referer",
+      "label": "Referer",
+      "field_type": "text"
+    },
+    {
+      "name": "country",
+      "label": "Country",
+      "field_type": "string"
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "*"
+    ],
+    "Administrator": [
+      "read"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

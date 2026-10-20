@@ -1,0 +1,31 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments, caches, and test databases
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+*.db
+*.sqlite
+*.sqlite3
+backend/.schema_cache/
+backend/backups/
+backend/uploads/
+
+# Frontend dependencies and generated output
+node_modules/
+.svelte-kit/
+build/
+.output/
+
+# Operating system and logs
+.DS_Store
+Thumbs.db
+*.log

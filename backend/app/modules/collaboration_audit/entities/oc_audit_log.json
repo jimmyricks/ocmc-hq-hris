@@ -1,0 +1,81 @@
+{
+  "name": "oc_audit_log",
+  "label": "Audit Log",
+  "module": "collaboration_audit",
+  "table_name": "oc_audit_log",
+  "title_field": "id",
+  "in_sidebar": true,
+  "icon": "clipboard-list",
+  "group": "Audit",
+  "is_immutable": true,
+  "fields": [
+    {
+      "name": "reference_entity",
+      "label": "Reference Entity",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "reference_id",
+      "label": "Reference ID",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "action",
+      "label": "Action",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "create",
+        "update",
+        "delete",
+        "submit",
+        "cancel"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "old_values",
+      "label": "Old Values",
+      "field_type": "text"
+    },
+    {
+      "name": "new_values",
+      "label": "New Values",
+      "field_type": "text"
+    },
+    {
+      "name": "actor_id",
+      "label": "Actor",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "ip_address",
+      "label": "IP Address",
+      "field_type": "string"
+    },
+    {
+      "name": "timestamp",
+      "label": "Timestamp",
+      "field_type": "datetime",
+      "required": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "read"
+    ],
+    "Administrator": [
+      "read"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "name": "ledger",
+  "label": "Ledger",
+  "module": "collaboration_audit",
+  "table_name": "ledger",
+  "title_field": "id",
+  "in_sidebar": true,
+  "icon": "book-open",
+  "group": "Audit",
+  "is_immutable": true,
+  "fields": [
+    {
+      "name": "reference_entity",
+      "label": "Reference Entity",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "reference_id",
+      "label": "Reference ID",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "user_id",
+      "label": "Payee",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "amount",
+      "label": "Amount",
+      "field_type": "currency",
+      "required": true,
+      "default": 0,
+      "in_list_view": true
+    },
+    {
+      "name": "entry_type",
+      "label": "Entry Type",
+      "field_type": "select",
+      "required": true,
+      "options": [
+        "credit",
+        "debit"
+      ],
+      "in_list_view": true
+    },
+    {
+      "name": "description",
+      "label": "Description",
+      "field_type": "text"
+    },
+    {
+      "name": "period",
+      "label": "Period",
+      "field_type": "date",
+      "required": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": [
+      "read"
+    ],
+    "Administrator": [
+      "read"
+    ],
+    "HR": [
+      "read"
+    ],
+    "User": [
+      "read"
+    ]
+  }
+}

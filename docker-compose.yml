@@ -1,0 +1,52 @@
+# Docker Compose for local development
+#
+# Backend runs on port 8005 (FastAPI / Uvicorn).
+# Frontend runs on port 3000 (SvelteKit Node server).
+#
+# Usage:
+#   docker compose up --build
+#   docker compose up -d
+#   docker compose down
+#
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: oc_hq_backend
+    ports:
+      - "8005:8005"
+    environment:
+      - PORT=8005
+      - HOST=0.0.0.0
+      - DATABASE_URL=sqlite+aiosqlite:///./dev.db
+      - PUBLIC_APP_URL=http://localhost:3000/
+      - CORS_ORIGINS=["http://localhost:3000"]
+      - RUN_SEEDS=true
+    volumes:
+      - backend-uploads:/app/uploads
+    networks:
+      - oc_hq
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: oc_hq_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - API_URL=http://backend:8005
+      - PORT=3000
+    depends_on:
+      - backend
+    networks:
+      - oc_hq
+
+volumes:
+  backend-uploads:
+
+networks:
+  oc_hq:
+    driver: bridge

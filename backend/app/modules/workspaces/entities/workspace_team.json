@@ -1,0 +1,35 @@
+{
+  "name": "workspace_team",
+  "label": "Workspace Team",
+  "module": "workspaces",
+  "table_name": "workspace_team",
+  "title_field": "name",
+  "in_sidebar": false,
+  "fields": [
+    {
+      "name": "workspace_id",
+      "label": "Workspace",
+      "field_type": "link",
+      "link_entity": "workspace",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "name",
+      "label": "Name",
+      "field_type": "string",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "slug",
+      "label": "Slug",
+      "field_type": "string",
+      "required": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": ["*"],
+    "Administrator": ["read"]
+  }
+}
