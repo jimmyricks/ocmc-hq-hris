@@ -111,6 +111,23 @@ async def require_authenticated_user(
     return current_user
 
 
+def is_system_admin_user(current_user: CurrentUser) -> bool:
+    return current_user.is_superuser or bool(
+        {"SystemManager", "Administrator"}.intersection(current_user.roles or [])
+    )
+
+
+async def require_system_admin_user(
+    current_user: CurrentUser = Depends(require_authenticated_user),
+) -> CurrentUser:
+    if not is_system_admin_user(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System administrator access required",
+        )
+    return current_user
+
+
 def get_current_user() -> CurrentUser:
     """Deprecated: Returns anonymous user. Use get_current_user_from_token instead."""
     return CurrentUser(

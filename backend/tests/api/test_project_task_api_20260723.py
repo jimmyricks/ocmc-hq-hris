@@ -25,15 +25,40 @@ async def _create_tables(db_engine):
 
 
 @pytest_asyncio.fixture
-async def admin_id(superuser_client):
+async def admin_id(superuser_client, db_session):
     """Return the id of the Administrator user created by superuser_client."""
+    from uuid import uuid4
+
+    from sqlalchemy import select
+
+    from app.modules.workspaces.models import WorkspaceMembership
+
     resp = await superuser_client.get(
         "/api/entity/user/list?filter_field=username&filter_value=Administrator"
     )
     payload = resp.json()
     assert payload["status"] == "success"
     assert payload["data"], "Administrator user not found"
-    return payload["data"][0]["id"]
+    user_id = payload["data"][0]["id"]
+    membership = await db_session.scalar(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.workspace_id == "workspace-oc-music-school",
+            WorkspaceMembership.user_id == user_id,
+        )
+    )
+    if not membership:
+        db_session.add(
+            WorkspaceMembership(
+                id=str(uuid4()),
+                workspace_id="workspace-oc-music-school",
+                user_id=user_id,
+                membership_role="supervisor",
+                is_home=True,
+                is_active=True,
+            )
+        )
+        await db_session.flush()
+    return user_id
 
 
 @pytest.mark.asyncio
@@ -141,6 +166,7 @@ async def test_create_task_via_project_tasks_endpoint(
         json={
             "project_id": project_id,
             "task_type_id": task_type_id,
+            "workspace_id": "workspace-bahandi",
             "title": title,
             "description": "A test task",
             "priority": "high",
@@ -155,6 +181,7 @@ async def test_create_task_via_project_tasks_endpoint(
     assert payload["data"]["title"] == title
     assert payload["data"]["status"] == "pending"
     assert payload["data"]["priority"] == "high"
+    assert payload["data"]["workspace_id"] == "workspace-oc-music-school"
 
     detail_resp = await superuser_client.get(f"/api/entity/task/detail/{task_id}")
     assert detail_resp.json()["data"]["title"] == title
@@ -441,7 +468,12 @@ async def test_member_lists_home_and_cross_project_records_only(client, db_sessi
 
     from app.core.config import settings
     from app.core.framework.models.auth import User
-    from app.modules.project_tasks.models import Project, ProjectMember, Task
+    from app.modules.project_tasks.models import (
+        Project,
+        ProjectMember,
+        Task,
+        TaskAssignment,
+    )
     from app.modules.workspaces.models import WorkspaceMembership
 
     member = User(
@@ -494,10 +526,32 @@ async def test_member_lists_home_and_cross_project_records_only(client, db_sessi
                 role="member",
                 is_active=True,
             ),
-            Task(id="scope-home-task", project_id=home_project.id, title="Home task"),
-            Task(id="scope-cross-task", project_id=cross_project.id, title="Cross task"),
-            Task(id="scope-private-task", project_id=private_project.id, title="Private task"),
+            Task(
+                id="scope-home-task",
+                project_id=home_project.id,
+                workspace_id=home_project.workspace_id,
+                title="Home task",
+            ),
+            Task(
+                id="scope-cross-task",
+                project_id=cross_project.id,
+                workspace_id=cross_project.workspace_id,
+                title="Cross task",
+            ),
+            Task(
+                id="scope-private-task",
+                project_id=private_project.id,
+                workspace_id=private_project.workspace_id,
+                title="Private task",
+            ),
             Task(id="scope-legacy-task", project_id=legacy_project.id, title="Unmapped task"),
+            TaskAssignment(
+                id="scope-cross-assignment",
+                task_id="scope-cross-task",
+                user_id=member.id,
+                is_active=True,
+                status="active",
+            ),
         ]
     )
     await db_session.commit()
@@ -516,14 +570,12 @@ async def test_member_lists_home_and_cross_project_records_only(client, db_sessi
     projects_response = await client.get("/api/entity/project/list", headers=headers)
     assert projects_response.status_code == 200
     assert {row["id"] for row in projects_response.json()["data"]} == {
-        home_project.id,
         cross_project.id,
     }
 
     tasks_response = await client.get("/api/entity/task/list", headers=headers)
     assert tasks_response.status_code == 200
     assert {row["id"] for row in tasks_response.json()["data"]} == {
-        "scope-home-task",
         "scope-cross-task",
     }
 

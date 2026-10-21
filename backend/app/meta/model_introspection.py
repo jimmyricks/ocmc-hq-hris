@@ -145,7 +145,13 @@ def _fk_link_entity(
     column: sa.Column, table_to_entity: dict[str, str]
 ) -> Optional[str]:
     """Return the entity name for a column's FK target table, if known."""
-    for fk in column.foreign_keys:
+    foreign_keys = list(column.foreign_keys)
+    single_column_foreign_keys = [
+        foreign_key
+        for foreign_key in foreign_keys
+        if len(foreign_key.constraint.elements) == 1
+    ]
+    for fk in single_column_foreign_keys + foreign_keys:
         entity = table_to_entity.get(fk.column.table.name)
         if entity:
             return entity

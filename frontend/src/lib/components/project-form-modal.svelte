@@ -1,12 +1,11 @@
 <script lang="ts">
-  import * as Dialog from "$lib/components/native/dialog/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
-  import { Textarea } from "$lib/components/native/textarea/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { toast } from "$lib/notifications";
-  import { taskApi } from "$lib/task-manager/api.js";
   import { saveEntity } from "$lib/api/index.js";
   import { workspaceApi } from "$lib/workspaces/api.js";
   import type { WorkspaceContext } from "$lib/workspaces/types.js";
@@ -29,13 +28,16 @@
   let isEdit = $derived(!!project?.id);
   let saving = $state(false);
   let name = $state("");
-  let color = $state("#6366f1");
+  let color = $state("#45aeee");
   let icon = $state("folder");
   let managerId = $state("");
   let description = $state("");
   let workspaceContext = $state<WorkspaceContext | null>(null);
   let workspaceId = $state("");
   let teamId = $state("");
+  let startDate = $state("");
+  let endDate = $state("");
+  let isContinuous = $state(false);
   let teams = $state<Array<{ id: string; name: string }>>([]);
   let loadingTeams = $state(false);
   const canChooseWorkspace = $derived(
@@ -45,16 +47,16 @@
   );
 
   const COLORS = [
-    "#6366f1",
-    "#ec4899",
-    "#f97316",
-    "#eab308",
-    "#22c55e",
-    "#14b8a6",
-    "#3b82f6",
-    "#8b5cf6",
-    "#ef4444",
-    "#6b7280",
+    "#45aeee",
+    "#e8488a",
+    "#ee8134",
+    "#3db95c",
+    "#4ba8c0",
+    "#e93f33",
+    "#1a1a1a",
+    "#54b8f7",
+    "#fb5d9b",
+    "#eee455",
   ];
 
   const ICONS = [
@@ -68,11 +70,14 @@
 
   $effect.pre(() => {
     name = project?.name ?? "";
-    color = project?.color ?? "#6366f1";
+    color = project?.color ?? "#45aeee";
     icon = project?.icon ?? "folder";
     managerId = project?.manager_id ?? "";
     description = project?.description ?? "";
     teamId = project?.team_id ?? "";
+    startDate = project?.start_date?.slice(0, 10) ?? "";
+    endDate = project?.end_date?.slice(0, 10) ?? "";
+    isContinuous = project?.is_continuous ?? false;
     if (project?.workspace_id) workspaceId = project.workspace_id;
   });
 
@@ -107,6 +112,11 @@
     return users.find((u) => u.id === id)?.full_name ?? "Select manager...";
   }
 
+  function updateContinuous(event: Event) {
+    isContinuous = (event.currentTarget as HTMLInputElement).checked;
+    if (isContinuous) endDate = "";
+  }
+
   async function handleSave() {
     if (!name.trim()) {
       toast.error("Project name is required");
@@ -129,6 +139,9 @@
         manager_id: managerId || undefined,
         description: description.trim() || undefined,
         team_id: teamId || null,
+        start_date: startDate || null,
+        end_date: isContinuous ? null : endDate || null,
+        is_continuous: isContinuous,
       };
       let saved: Project;
       if (isEdit && project?.id) {
@@ -259,7 +272,7 @@
             <button
               type="button"
               class="size-7 rounded-full border-2 transition"
-              class:border-foreground={color === c}
+              class:border-base-content={color === c}
               style:background-color={c}
               onclick={() => (color = c)}
               aria-label="Select color {c}"
@@ -267,6 +280,33 @@
           {/each}
         </div>
       </Field.Field>
+
+      <div class="grid grid-cols-2 gap-4">
+        <Field.Field class="gap-1">
+          <Field.Label for="project-start-date">Project start</Field.Label>
+          <Input id="project-start-date" type="date" bind:value={startDate} />
+        </Field.Field>
+        {#if !isContinuous}
+          <Field.Field class="gap-1">
+            <Field.Label for="project-end-date">Project end</Field.Label>
+            <Input id="project-end-date" type="date" bind:value={endDate} />
+          </Field.Field>
+        {:else}
+          <p class="self-end pb-2 text-sm text-base-content/60">
+            Ongoing project
+          </p>
+        {/if}
+      </div>
+
+      <label class="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          class="checkbox"
+          checked={isContinuous}
+          onchange={updateContinuous}
+        />
+        <span>Continuous project</span>
+      </label>
 
       <Field.Field class="gap-1">
         <Field.Label for="project-description">Description</Field.Label>

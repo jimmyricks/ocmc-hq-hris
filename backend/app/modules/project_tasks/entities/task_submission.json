@@ -78,19 +78,16 @@
       "*"
     ],
     "Administrator": [
-      "read",
-      "create",
-      "update"
+      "*"
     ],
     "ProjectManager": [
       "read",
       "create",
       "update"
     ],
-    "User": [
+    "Employee": [
       "read",
-      "create",
-      "update"
+      "create"
     ]
   }
 }

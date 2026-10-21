@@ -1,5 +1,5 @@
 from datetime import date
-from sqlalchemy import Date, ForeignKey, String, Text
+from sqlalchemy import Boolean, Date, ForeignKey, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.base_model import BaseModel
 
@@ -7,6 +7,9 @@ from app.core.base_model import BaseModel
 class Project(BaseModel):
     """Project entity model."""
     __tablename__ = "project"
+    __table_args__ = (
+        UniqueConstraint("id", "workspace_id", name="uq_project_id_workspace"),
+    )
     
     name: Mapped[str] = mapped_column(String(255), nullable=True, default=None)
     workspace_id: Mapped[str] = mapped_column(
@@ -22,3 +25,6 @@ class Project(BaseModel):
     status: Mapped[str] = mapped_column(String(100), nullable=True, default="active")
     start_date: Mapped[date] = mapped_column(Date, nullable=True, default=None)
     end_date: Mapped[date] = mapped_column(Date, nullable=True, default=None)
+    is_continuous: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )

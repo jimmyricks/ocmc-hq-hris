@@ -7,10 +7,13 @@
  */
 import { taskApi } from "./api.js";
 import type { Project, TaskCategory, TaskType, User } from "./types.js";
+import { getActiveWorkspaceId } from "$lib/workspaces/context";
 
 type Entry<T> = { promise: Promise<T> } | { value: T } | undefined;
 
 const _cache: Record<string, Entry<any>> = {};
+const workspaceCacheKey = (key: string) =>
+	`${key}:${getActiveWorkspaceId() ?? "global"}`;
 
 async function getOrFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
 	const entry = _cache[key];
@@ -39,24 +42,28 @@ async function getOrFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T>
 
 export const refCache = {
 	async getUsers(): Promise<User[]> {
-		return getOrFetch("users", () => taskApi.getUsers());
+		return getOrFetch(workspaceCacheKey("users"), () => taskApi.getUsers());
 	},
 
 	async getTaskTypes(): Promise<TaskType[]> {
-		return getOrFetch("task_types", () => taskApi.getTaskTypes());
+		return getOrFetch(workspaceCacheKey("task_types"), () => taskApi.getTaskTypes());
 	},
 
 	async getTaskCategories(): Promise<TaskCategory[]> {
-		return getOrFetch("task_categories", () => taskApi.getTaskCategories());
+		return getOrFetch(workspaceCacheKey("task_categories"), () => taskApi.getTaskCategories());
 	},
 
 	async getProjects(): Promise<Project[]> {
-		return getOrFetch("projects", () => taskApi.getProjects());
+		return getOrFetch(workspaceCacheKey("projects"), () => taskApi.getProjects());
 	},
 
 	/** Invalidate one key or the entire cache. */
 	invalidate(key?: "users" | "task_types" | "task_categories" | "projects") {
-		if (key) delete _cache[key];
+		if (key) {
+			for (const cacheKey of Object.keys(_cache)) {
+				if (cacheKey.startsWith(`${key}:`)) delete _cache[cacheKey];
+			}
+		}
 		else for (const k of Object.keys(_cache)) delete _cache[k];
 	},
 };

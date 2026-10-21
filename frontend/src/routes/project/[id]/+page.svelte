@@ -4,6 +4,7 @@
   import { goto } from "$app/navigation";
   import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
+  import { saveEntity } from "$lib/api/index.js";
   import { refCache } from "$lib/task-manager/ref-cache.js";
   import type {
     Project,
@@ -14,13 +15,12 @@
     User,
     WorkflowState,
   } from "$lib/task-manager/types.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import * as DropdownMenu from "$lib/components/native/dropdown-menu/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
   import ProjectTaskTable, {
-    type EditableField,
     type TaskCreateInput,
   } from "$lib/components/task-manager/project-task-table.svelte";
   import { taskState } from "$lib/task-manager/utils.js";
@@ -58,14 +58,14 @@
       ? {
           id: "all",
           name: "All Tasks",
-          color: "#6b7280",
+          color: "var(--color-base-content)",
           icon: "layers",
           manager_id: "",
         }
       : projects.find((p) => p.id === projectId) || {
           id: projectId,
           name: browser ? projectId : "Loading...",
-          color: "#6b7280",
+          color: "var(--color-base-content)",
           icon: "layers",
           manager_id: "",
         },
@@ -146,18 +146,6 @@
     detailOpen = true;
   }
 
-  async function updateTaskCell(
-    task: Task,
-    field: EditableField,
-    value: string | null,
-  ) {
-    const updated = { ...task, [field]: value } as Task;
-    const saved = await taskApi.updateTask(updated);
-    tasks = tasks.map((item) =>
-      item.id === task.id ? (saved ?? updated) : item,
-    );
-  }
-
   async function createInlineTask(draft: TaskCreateInput) {
     const created = await taskApi.createTask(draft);
     tasks = [...tasks, created];
@@ -185,10 +173,14 @@
     )
       return;
     try {
-      await taskApi.updateTask({
-        ...selectedProject,
-        status: "closed",
-      } as any);
+      await saveEntity(
+        "project",
+        {
+          ...selectedProject,
+          status: "closed",
+        },
+        selectedProject.id,
+      );
       toast.success("Project closed");
       await loadData();
     } catch (err: any) {
@@ -237,7 +229,7 @@
       {#if browser && projectId !== "all" && canManageWorkspace}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
-            <Button variant="outline" class="h-9 gap-1.5 px-2">
+            <Button variant="outline" size="md" icon class="gap-1.5">
               <MoreVerticalIcon class="size-4" />
             </Button>
           </DropdownMenu.Trigger>
@@ -251,7 +243,7 @@
               Add Member
             </DropdownMenu.Item>
             <DropdownMenu.Separator />
-            <DropdownMenu.Item onclick={closeProject} class="text-destructive">
+            <DropdownMenu.Item onclick={closeProject} class="text-error">
               <XIcon class="size-4" />
               Close Project
             </DropdownMenu.Item>
@@ -265,13 +257,14 @@
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
     <div class="relative flex-1">
       <SearchIcon
-        class="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+        class="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-base-content/60"
       />
       <Input
         type="search"
         placeholder="Search tasks..."
         bind:value={searchQuery}
-        class="h-9 w-full pl-9 sm:max-w-xs"
+        size="md"
+        class="w-full pl-9 sm:max-w-xs"
       />
     </div>
     <Select.Root
@@ -279,7 +272,7 @@
       value={stateFilter}
       onValueChange={(v) => (stateFilter = v)}
     >
-      <Select.Trigger class="h-9 w-full sm:w-44">
+      <Select.Trigger size="md" class="w-full sm:w-44">
         {STATE_FILTERS.find((f) => f.value === stateFilter)?.label ??
           "All States"}
       </Select.Trigger>
@@ -295,17 +288,16 @@
     {loading}
     {taskTypes}
     defaultProjectId={projectId !== "all" ? projectId : (projects[0]?.id ?? "")}
-    canEdit={canManageWorkspace}
     canCreate={canManageWorkspace &&
       (projectId !== "all" || projects.length > 0)}
     onCreate={createInlineTask}
-    onUpdate={updateTaskCell}
     onOpen={openTask}
   />
 </div>
 
 <TaskDetailModal
   bind:open={detailOpen}
+  presentation="drawer"
   taskId={detailTaskId}
   {projects}
   {taskTypes}

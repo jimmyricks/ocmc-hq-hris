@@ -69,6 +69,17 @@ async def get_child_records(
         raise NotFoundError("Entity", child_entity)
 
     user = await get_current_user_from_token(authorization, db)
+    parent_model = get_entity_model(entity)
+    parent_record = await db.get(parent_model, record_id) if parent_model else None
+    if not parent_record or not await row_scope_service.can_access_record(
+        parent_record,
+        entity,
+        str(user.id),
+        user.role_ids,
+        user.roles or [],
+        user.is_superuser,
+    ):
+        raise ForbiddenError(f"You don't have permission to access this {parent_meta.label}")
     has_read = await rbac.check_permission(
         user_id=user.id,
         entity=child_entity,

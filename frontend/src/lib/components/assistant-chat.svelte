@@ -4,8 +4,8 @@
     sendAssistantMessage,
     type AssistantMessage,
   } from "$lib/assistant/api.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Textarea } from "$lib/components/native/textarea/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { toast } from "$lib/notifications";
 
   import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
@@ -149,12 +149,12 @@
 <div class="assistant-dock">
   <section
     id="assistant-chat-panel"
-    class="assistant-panel flex flex-col gap-0 overflow-hidden border border-border bg-card text-card-foreground"
+    class="assistant-panel flex flex-col gap-0 overflow-hidden border border-base-300 bg-base-100 text-base-content"
     aria-labelledby="assistant-chat-title"
     hidden={!open}
   >
     <header
-      class="assistant-header border-b border-border/70 px-4 pb-3 pt-4 sm:px-5"
+      class="assistant-header border-b border-base-300/70 px-4 pb-3 pt-4 sm:px-5"
     >
       <div class="flex items-start gap-3">
         <div
@@ -176,15 +176,15 @@
               API pending
             </span>
           </div>
-          <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+          <p class="mt-1 text-xs leading-relaxed text-base-content/60">
             Your self-hosted project, task, and HR copilot.
           </p>
         </div>
         <div class="flex shrink-0 items-center gap-1">
           <Button
             variant="ghost"
-            size="icon-sm"
-            class="text-muted-foreground"
+            size="sm" icon
+            class="text-base-content/60"
             aria-label="Start a new chat"
             onclick={startNewChat}
             disabled={sending}
@@ -193,8 +193,8 @@
           </Button>
           <Button
             variant="ghost"
-            size="icon-sm"
-            class="text-muted-foreground"
+            size="sm" icon
+            class="text-base-content/60"
             aria-label="Close chat"
             onclick={() => (open = false)}
           >
@@ -241,7 +241,7 @@
             <SparklesIcon class="size-3.5" />
           </span>
           <div
-            class="flex items-center gap-1 rounded-lg border border-border/70 bg-card px-3.5 py-3"
+            class="flex items-center gap-1 rounded-lg border border-base-300/70 bg-base-100 px-3.5 py-3"
           >
             <span class="typing-dot"></span>
             <span class="typing-dot delay-one"></span>
@@ -254,29 +254,27 @@
       {#if messages.length === 1}
         <div class="mt-2 flex flex-col gap-2">
           <p
-            class="px-1 text-[10px] font-bold uppercase tracking-[0.13em] text-muted-foreground"
+            class="px-1 text-[10px] font-bold uppercase tracking-[0.13em] text-base-content/60"
           >
             Try asking
           </p>
           {#each suggestions as suggestion (suggestion.label)}
             <button
-              class="suggestion-row flex items-center gap-2.5 rounded-md border border-border/70 bg-card px-3 py-2.5 text-left text-xs font-medium transition hover:border-primary/30 hover:bg-secondary/50"
+              class="suggestion-row flex items-center gap-2.5 rounded-md border border-base-300/70 bg-base-100 px-3 py-2.5 text-left text-xs font-medium transition hover:border-primary/30 hover:bg-base-200/50"
               onclick={() => choosePrompt(suggestion.prompt)}
             >
               <suggestion.icon class="size-4 text-primary" />
               {suggestion.label}
-              <ArrowUpRightIcon
-                class="ml-auto size-3.5 text-muted-foreground"
-              />
+              <ArrowUpRightIcon class="ml-auto size-3.5 text-base-content/60" />
             </button>
           {/each}
         </div>
       {/if}
     </div>
 
-    <div class="border-t border-border/70 bg-card/90 p-3 sm:p-4">
+    <div class="border-t border-base-300/70 bg-base-100/90 p-3 sm:p-4">
       <form
-        class="composer rounded-lg border border-border/80 bg-background p-2"
+        class="composer rounded-lg border border-base-300/80 bg-base-200 p-2"
         onsubmit={(event) => {
           event.preventDefault();
           void send();
@@ -294,12 +292,12 @@
           disabled={sending}
         />
         <div class="flex items-center justify-between gap-2 px-1 pb-0.5">
-          <span class="text-[10px] text-muted-foreground">
+          <span class="text-[10px] text-base-content/60">
             Enter to send · Shift+Enter for a new line
           </span>
           <Button
             type="submit"
-            size="icon-sm"
+            size="sm" icon
             class="send-button size-8 rounded-md"
             aria-label="Send message"
             disabled={!draft.trim() || sending}
@@ -309,7 +307,7 @@
         </div>
       </form>
       <p
-        class="mt-2 text-center text-[9px] leading-relaxed text-muted-foreground"
+        class="mt-2 text-center text-[9px] leading-relaxed text-base-content/60"
       >
         Workspace data stays on your backend. Confirm changes before the
         assistant executes them.
@@ -348,8 +346,8 @@
     width: min(420px, calc(100vw - 2.5rem));
     height: min(640px, calc(100dvh - 6.5rem));
     min-height: min(420px, calc(100dvh - 6.5rem));
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-float);
+    border-radius: var(--radius-box);
+    box-shadow: var(--shadow-xl);
     animation: chat-enter 160ms ease-out;
   }
 
@@ -358,46 +356,53 @@
   }
 
   :global(.launcher-button) {
-    background: var(--primary);
-    color: var(--primary-foreground);
-    box-shadow: var(--shadow-float);
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    box-shadow: var(--shadow-xl);
   }
 
   :global(.launcher-button:hover:not(:disabled)) {
-    background: color-mix(in oklab, var(--primary) 88%, var(--pastel-rose));
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 88%,
+      var(--color-base-100)
+    );
   }
 
   .launcher-icon {
-    background: color-mix(in oklab, var(--primary-foreground) 14%, transparent);
+    background: color-mix(
+      in oklab,
+      var(--color-primary-content) 14%,
+      transparent
+    );
   }
 
   .assistant-mark {
-    background: var(--pastel-pink);
-    color: var(--foreground);
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 10%,
+      var(--color-base-100)
+    );
+    color: var(--color-primary);
   }
 
   .setup-badge {
-    background: var(--pastel-rose);
-    color: var(--foreground);
+    background: var(--color-base-200);
+    color: var(--color-base-content);
   }
 
   .source-chip {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-selector);
     padding: 0.2rem 0.5rem;
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 9px;
   }
 
   .assistant-thread {
-    background: radial-gradient(
-        ellipse at 90% 0%,
-        color-mix(in oklab, var(--pastel-pink) 42%, transparent),
-        transparent 35%
-      ),
-      var(--background);
+    background: var(--color-base-200);
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--color-base-300) transparent;
   }
 
   .message-row.user-message {
@@ -410,46 +415,53 @@
   }
 
   .assistant-avatar {
-    background: var(--pastel-pink);
-    color: var(--foreground);
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 10%,
+      var(--color-base-100)
+    );
+    color: var(--color-primary);
   }
 
   .user-message .message-bubble {
-    background: var(--primary);
-    color: var(--primary-foreground);
+    background: var(--color-primary);
+    color: var(--color-primary-content);
   }
 
   .message-row:not(.user-message) .message-bubble {
-    border: 1px solid var(--border);
-    background: var(--card);
-    color: var(--foreground);
-    box-shadow: 0 3px 12px
-      color-mix(in oklab, var(--foreground) 5%, transparent);
+    border: 1px solid var(--color-base-300);
+    background: var(--color-base-100);
+    color: var(--color-base-content);
   }
 
   .suggestion-row {
-    color: var(--foreground);
+    color: var(--color-base-content);
   }
 
   .composer:focus-within {
-    border-color: var(--ring);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 18%, transparent);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px
+      color-mix(in oklab, var(--color-primary) 18%, transparent);
   }
 
   .composer :global(.send-button) {
-    background: var(--primary);
-    color: var(--primary-foreground);
+    background: var(--color-primary);
+    color: var(--color-primary-content);
   }
 
   .composer :global(.send-button:hover:not(:disabled)) {
-    background: color-mix(in oklab, var(--primary) 88%, var(--pastel-rose));
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 88%,
+      var(--color-base-100)
+    );
   }
 
   .typing-dot {
     width: 4px;
     height: 4px;
     border-radius: 50%;
-    background: var(--muted-foreground);
+    background: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     animation: pulse 900ms ease-in-out infinite alternate;
   }
 

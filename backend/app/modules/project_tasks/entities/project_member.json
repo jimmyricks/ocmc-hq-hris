@@ -57,10 +57,7 @@
       "*"
     ],
     "Administrator": [
-      "read",
-      "create",
-      "update",
-      "delete"
+      "*"
     ],
     "ProjectManager": [
       "read",
@@ -68,7 +65,7 @@
       "update",
       "delete"
     ],
-    "User": [
+    "Employee": [
       "read"
     ]
   }

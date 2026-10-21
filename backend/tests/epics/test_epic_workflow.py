@@ -37,6 +37,7 @@ from app.modules.project_tasks.services import (
     TaskApprovalService,
     TaskSubmissionService,
 )
+from app.modules.workspaces.models import WorkspaceMembership
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -188,6 +189,17 @@ async def task(db_session, pm_user, project, task_type):
 
 @pytest_asyncio.fixture
 async def assignment(db_session, pm_user, worker_user, task):
+    workspace_id = (await db_session.get(Project, task.project_id)).workspace_id
+    db_session.add(
+        WorkspaceMembership(
+            id=_unique("membership"),
+            workspace_id=workspace_id,
+            user_id=worker_user.id,
+            membership_role="member",
+            is_home=True,
+            is_active=True,
+        )
+    )
     db_session.add(
         ProjectMember(
             id=_unique("member"),
@@ -205,6 +217,17 @@ async def assignment(db_session, pm_user, worker_user, task):
 async def test_assignment_deactivates_previous_and_moves_task_to_in_progress(
     db_session, pm_user, worker_user, task
 ):
+    project = await db_session.get(Project, task.project_id)
+    db_session.add(
+        WorkspaceMembership(
+            id=_unique("membership"),
+            workspace_id=project.workspace_id,
+            user_id=worker_user.id,
+            membership_role="member",
+            is_home=True,
+            is_active=True,
+        )
+    )
     db_session.add(
         ProjectMember(
             id=_unique("member"),
@@ -490,6 +513,16 @@ async def test_period_is_paid_only_after_all_employee_entries_are_paid(
     db_session, pm_user, hr_user, worker_user, assignment, project, task_type
 ):
     second_task = await _make_task(db_session, pm_user, project, task_type)
+    db_session.add(
+        WorkspaceMembership(
+            id=_unique("membership"),
+            workspace_id=project.workspace_id,
+            user_id=hr_user.id,
+            membership_role="member",
+            is_home=True,
+            is_active=True,
+        )
+    )
     db_session.add(
         ProjectMember(
             id=_unique("member"),

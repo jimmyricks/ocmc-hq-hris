@@ -14,7 +14,7 @@ export interface TaskManagerState {
 export const taskManagerStore = writable<TaskManagerState>({
 	selectedProjectId: 'all',
 	currentUser: null,
-	allProject: { id: 'all', name: 'All Tasks', color: '#6b7280', icon: 'layers', manager_id: '' },
+	allProject: { id: 'all', name: 'All Tasks', color: 'var(--color-base-content)', icon: 'layers', manager_id: '' },
 	projects: [],
 	tasks: [],
 	loading: true,

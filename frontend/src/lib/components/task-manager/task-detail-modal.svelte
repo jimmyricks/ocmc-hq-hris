@@ -28,25 +28,22 @@
     taskState,
   } from "$lib/task-manager/utils.js";
 
-  import * as Card from "$lib/components/native/card/index.js";
-  import * as Tabs from "$lib/components/native/tabs/index.js";
-  import * as Dialog from "$lib/components/native/dialog/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as InputGroup from "$lib/components/native/input-group/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
-  import * as DropdownMenu from "$lib/components/native/dropdown-menu/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
-  import { Textarea } from "$lib/components/native/textarea/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import { Separator } from "$lib/components/native/separator/index.js";
-  import {
-    Avatar,
-    AvatarFallback,
-  } from "$lib/components/native/avatar/index.js";
-  import * as Empty from "$lib/components/native/empty/index.js";
-  import * as Item from "$lib/components/native/item/index.js";
-  import { Skeleton } from "$lib/components/native/skeleton/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import * as Tabs from "$lib/components/ui/tabs/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as InputGroup from "$lib/components/ui/input-group/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import { Separator } from "$lib/components/ui/separator/index.js";
+  import { Avatar, AvatarFallback } from "$lib/components/ui/avatar/index.js";
+  import * as Empty from "$lib/components/ui/empty/index.js";
+  import * as Item from "$lib/components/ui/item/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { cn } from "$lib/utils.js";
 
   import PlayIcon from "@lucide/svelte/icons/play";
@@ -66,6 +63,7 @@
 
   interface Props {
     open?: boolean;
+    presentation?: "modal" | "drawer";
     taskId: string | null;
     /** When set, the modal opens in "new task" create mode with these defaults. */
     newTask?: Task | null;
@@ -81,12 +79,12 @@
 
   let {
     open = $bindable(false),
+    presentation = "modal",
     taskId,
     newTask = null,
     projects = [],
     taskTypes: taskTypesProp = [],
     taskCategories: taskCategoriesProp = [],
-    members = [],
     users: usersProp = [],
     onTaskUpdated,
     onTaskCreated,
@@ -110,6 +108,7 @@
   // Create mode
   let isNew = $derived(!!newTask);
   let assigneeId = $state<string>("");
+  let assigning = $state(false);
   let deleteConfirm = $state(false);
 
   // Editable draft of the task
@@ -133,7 +132,7 @@
 
   // Review dialog
   let reviewOpen = $state(false);
-  let reviewDecision = $state<ApprovalDecision>("approved");
+  let reviewDecision = $state<ApprovalDecision | "">("approved");
   let reviewRemarks = $state("");
   let reviewing = $state(false);
   let reviewSubmission = $state<TaskSubmission | null>(null);
@@ -159,13 +158,9 @@
   );
   let isAssignee = $derived(!!myAssignment);
 
-  // Assignable users for create mode = project members of selected project
-  let assignableUsers = $derived(
-    members
-      .filter((m) => m.project_id === draft.project_id)
-      .map((m) => users.find((u) => u.id === m.user_id))
-      .filter((u): u is User => !!u),
-  );
+  // The assign endpoint accepts active members of the task's workspace.
+  // The workspace directory is already scoped server-side.
+  let assignableUsers = $derived(users);
 
   let stateValue = $derived(task ? taskState(task) : null);
   let badge = $derived(
@@ -320,6 +315,23 @@
     }
   }
 
+  async function changeAssignee(userId: string) {
+    if (!task || assigning || !userId || userId === activeAssigneeId) return;
+    assigning = true;
+    try {
+      await taskApi.assignTask(task.id, userId);
+      assignments = await taskApi
+        .getTaskAssignments(task.id)
+        .catch(() => assignments);
+      toast.success("Task reassigned");
+      onTaskUpdated?.();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to reassign task");
+    } finally {
+      assigning = false;
+    }
+  }
+
   async function handleDelete() {
     if (!task) return;
     if (!deleteConfirm) {
@@ -405,7 +417,7 @@
   }
 
   async function handleReview() {
-    if (!reviewSubmission) return;
+    if (!reviewSubmission || !reviewDecision) return;
     if (reviewDecision !== "approved" && !reviewRemarks.trim()) {
       toast.error("Remarks are required for reject or revision requests");
       return;
@@ -499,556 +511,608 @@
     newLinkUrl = "";
   }
 
+  const componentId = $props.id();
+  const drawerToggleId = `task-detail-drawer-${componentId}`;
+
+  function handleDrawerKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && presentation === "drawer" && open)
+      open = false;
+  }
+
   function removeLink(id: string) {
     if (!draft.links) return;
     draft.links = draft.links.filter((l) => l.id !== id);
   }
 </script>
 
-<Dialog.Root bind:open>
-  <Dialog.Content class="max-h-[90vh] overflow-y-auto !max-w-xl p-4!">
-    {#if loading}
+<svelte:window onkeydown={handleDrawerKeydown} />
+
+{#snippet detailBody()}
+  <Button
+    variant="ghost"
+    size="sm"
+    icon
+    class="absolute right-2 top-2 z-10 rounded-full"
+    aria-label="Close task details"
+    onclick={() => (open = false)}
+  >
+    <XIcon />
+  </Button>
+  {#if loading}
+    <Dialog.Header>
+      <Dialog.Title>Loading task...</Dialog.Title>
+    </Dialog.Header>
+    <div class="space-y-4 py-2">
+      <Skeleton class="h-8 w-2/3" />
+      <Skeleton class="h-64 w-full" />
+    </div>
+  {:else if error}
+    <Dialog.Header>
+      <Dialog.Title>{error}</Dialog.Title>
+      <Dialog.Description>The task may have been removed.</Dialog.Description>
+    </Dialog.Header>
+  {:else if task || isNew}
+    <Tabs.Root bind:value={activeTab}>
       <Dialog.Header>
-        <Dialog.Title>Loading task...</Dialog.Title>
-      </Dialog.Header>
-      <div class="space-y-4 py-2">
-        <Skeleton class="h-8 w-2/3" />
-        <Skeleton class="h-64 w-full" />
-      </div>
-    {:else if error}
-      <Dialog.Header>
-        <Dialog.Title>{error}</Dialog.Title>
-        <Dialog.Description>The task may have been removed.</Dialog.Description>
-      </Dialog.Header>
-    {:else if task || isNew}
-      <Tabs.Root bind:value={activeTab}>
-        <Dialog.Header>
-          <div class="flex flex-col justify-between">
-            {#if isNew}
-              <Dialog.Title>New Task</Dialog.Title>
-              <Dialog.Description
-                >Create a new task and assign it to a project member.</Dialog.Description
-              >
-            {:else}
-              <div class="flex items-center gap-2">
-                {#if task!.task_key}
-                  <span class="font-mono text-sm text-muted-foreground"
-                    >{task!.task_key}</span
-                  >
-                {/if}
-                {#if fieldsLocked}
-                  <span
-                    class="inline-flex items-center gap-1 text-xs text-muted-foreground"
-                  >
-                    <LockIcon class="size-3" />
-                    Locked for review
-                  </span>
-                {/if}
-              </div>
-              <Dialog.Title class="text-xl">{task!.title}</Dialog.Title>
-              {#if project}
-                <Dialog.Description
-                  class="flex items-center gap-2 mt-2 justify-between"
+        <div class="flex flex-col justify-between">
+          {#if isNew}
+            <Dialog.Title>New Task</Dialog.Title>
+            <Dialog.Description
+              >Create a new task and assign it to a project member.</Dialog.Description
+            >
+          {:else}
+            <div class="flex items-center gap-2">
+              {#if task!.task_key}
+                <span class="font-mono text-sm text-base-content/60"
+                  >{task!.task_key}</span
                 >
-                  <DropdownMenu.DropdownMenu>
-                    <DropdownMenu.DropdownMenuTrigger>
-                      <Button
-                        variant={badge?.variant || "default"}
-                        class="gap-2 h-7 rounded-xl text-sm font-medium px-3"
-                      >
-                        <span
-                          class="size-2 rounded-full"
-                          style:background-color={badge?.color || "#6b7280"}
-                        ></span>
-                        {badge?.label}
-                      </Button>
-                    </DropdownMenu.DropdownMenuTrigger>
-                    <DropdownMenu.DropdownMenuContent class="w-48">
-                      {#if isAssignee && stateValue === "draft_assigned"}
-                        <DropdownMenu.DropdownMenuItem onclick={startTask}>
-                          <PlayIcon class="size-4" />
-                          Start
-                        </DropdownMenu.DropdownMenuItem>
-                      {/if}
-                      {#if isAssignee && (stateValue === "in_progress" || stateValue === "needs_revision")}
-                        <DropdownMenu.DropdownMenuItem onclick={openSubmit}>
-                          <SendIcon class="size-4" />
-                          Submit Work
-                        </DropdownMenu.DropdownMenuItem>
-                      {/if}
-                      {#if isPM && stateValue === "approved"}
-                        <DropdownMenu.DropdownMenuItem onclick={closeTask}>
-                          <LockIcon class="size-4" />
-                          Close Task
-                        </DropdownMenu.DropdownMenuItem>
-                      {/if}
-                    </DropdownMenu.DropdownMenuContent>
-                  </DropdownMenu.DropdownMenu>
-                  <div class="flex items-center gap-2">
-                    <span
-                      class="size-2 rounded-full"
-                      style:background-color={project.color ?? "#6b7280"}
-                    ></span>
-                    {project.name}
-                  </div>
-                </Dialog.Description>
               {/if}
+              {#if fieldsLocked}
+                <Badge variant="secondary" class="gap-1">
+                  <LockIcon class="size-3" />
+                  Locked for review
+                </Badge>
+              {/if}
+            </div>
+            <Dialog.Title class="text-xl">{task!.title}</Dialog.Title>
+            {#if project}
+              <Dialog.Description
+                class="flex items-center gap-2 mt-2 justify-between"
+              >
+                <DropdownMenu.DropdownMenu>
+                  <DropdownMenu.DropdownMenuTrigger>
+                    <Button
+                      variant="outline"
+                      size="md"
+                      class="gap-2 px-3 font-medium"
+                    >
+                      <span
+                        class="size-2 rounded-full"
+                        style:background-color={badge?.color ||
+                          "var(--color-base-content)"}
+                      ></span>
+                      {badge?.label}
+                    </Button>
+                  </DropdownMenu.DropdownMenuTrigger>
+                  <DropdownMenu.DropdownMenuContent class="w-48">
+                    {#if isAssignee && stateValue === "draft_assigned"}
+                      <DropdownMenu.DropdownMenuItem onclick={startTask}>
+                        <PlayIcon class="size-4" />
+                        Start
+                      </DropdownMenu.DropdownMenuItem>
+                    {/if}
+                    {#if isAssignee && (stateValue === "in_progress" || stateValue === "needs_revision")}
+                      <DropdownMenu.DropdownMenuItem onclick={openSubmit}>
+                        <SendIcon class="size-4" />
+                        Submit Work
+                      </DropdownMenu.DropdownMenuItem>
+                    {/if}
+                    {#if isPM && stateValue === "approved"}
+                      <DropdownMenu.DropdownMenuItem onclick={closeTask}>
+                        <LockIcon class="size-4" />
+                        Close Task
+                      </DropdownMenu.DropdownMenuItem>
+                    {/if}
+                  </DropdownMenu.DropdownMenuContent>
+                </DropdownMenu.DropdownMenu>
+                <div class="flex items-center gap-2">
+                  <span
+                    class="size-2 rounded-full"
+                    style:background-color={project.color ??
+                      "var(--color-base-content)"}
+                  ></span>
+                  {project.name}
+                </div>
+              </Dialog.Description>
             {/if}
-          </div>
+          {/if}
+        </div>
 
-          <Tabs.List
-            class={cn(
-              "grid w-full",
-              isNew ? "grid-cols-1" : "grid-cols-2",
-              "mt-2",
-            )}
-          >
-            <Tabs.Trigger value="details" class="gap-1.5">
-              <ClipboardListIcon class="size-4" />
-              Details
+        <Tabs.List
+          class={cn(
+            "mt-2 w-full",
+            isNew ? "grid grid-cols-1" : "grid grid-cols-2 sm:flex",
+          )}
+        >
+          <Tabs.Trigger value="details" class="gap-1.5">
+            <ClipboardListIcon class="size-4" />
+            Details
+          </Tabs.Trigger>
+          {#if !isNew}
+            <Tabs.Trigger value="comments" class="gap-1.5">
+              <MessageSquareIcon class="size-4" />
+              Comments
+              {#if comments.length}
+                <span class="ml-1 text-xs text-base-content/60"
+                  >{comments.length}</span
+                >
+              {/if}
             </Tabs.Trigger>
-            {#if !isNew}
-              <Tabs.Trigger value="comments" class="gap-1.5">
-                <MessageSquareIcon class="size-4" />
-                Comments
-                {#if comments.length}
-                  <span class="ml-1 text-xs text-muted-foreground"
-                    >{comments.length}</span
-                  >
-                {/if}
-              </Tabs.Trigger>
-            {/if}
-          </Tabs.List>
-        </Dialog.Header>
+          {/if}
+        </Tabs.List>
+      </Dialog.Header>
 
-        <!-- DETAILS TAB -->
-        <Tabs.Content value="details" class="space-y-6 pt-2">
-          {#if task || isNew}
-            <Field.FieldGroup class="gap-4">
-              <!-- Title -->
+      <!-- DETAILS TAB -->
+      <Tabs.Content value="details" class="space-y-6 pt-2">
+        {#if task || isNew}
+          <Field.FieldGroup class="gap-4">
+            <!-- Title -->
+            <Field.Field class="gap-1">
+              <Field.Label for="task-title">Title</Field.Label>
+              <Input
+                id="task-title"
+                bind:value={draft.title}
+                placeholder="Enter task title"
+                size="md"
+                class="w-full"
+                disabled={fieldsLocked}
+              />
+            </Field.Field>
+
+            <!-- Description -->
+            <Field.Field class="gap-1">
+              <Field.Label for="task-description">Description</Field.Label>
+              <Textarea
+                id="task-description"
+                bind:value={draft.description}
+                placeholder="Add details..."
+                class="min-h-[80px] resize-none"
+                disabled={fieldsLocked}
+              />
+            </Field.Field>
+
+            <div class="grid grid-cols-2 gap-4">
+              <!-- Task Type -->
               <Field.Field class="gap-1">
-                <Field.Label for="task-title">Title</Field.Label>
-                <Input
-                  id="task-title"
-                  bind:value={draft.title}
-                  placeholder="Enter task title"
-                  class="w-full h-9"
-                  disabled={fieldsLocked}
-                />
-              </Field.Field>
-
-              <!-- Description -->
-              <Field.Field class="gap-1">
-                <Field.Label for="task-description">Description</Field.Label>
-                <Textarea
-                  id="task-description"
-                  bind:value={draft.description}
-                  placeholder="Add details..."
-                  class="min-h-[80px] resize-none"
-                  disabled={fieldsLocked}
-                />
-              </Field.Field>
-
-              <div class="grid grid-cols-2 gap-4">
-                <!-- Task Type -->
-                <Field.Field class="gap-1">
-                  <Field.Label for="task-type">Task Type</Field.Label>
-                  <Select.Root
-                    type="single"
-                    value={draft.task_type_id}
-                    disabled={fieldsLocked || taskTypes.length === 0}
-                    onValueChange={(v) => {
-                      draft.task_type_id = v;
-                    }}
-                  >
-                    <Select.Trigger id="task-type" class="w-full !h-9">
-                      <span class="truncate">
-                        {taskTypes.find((tt) => tt.id === draft.task_type_id)
-                          ?.name ?? "Select..."}
-                      </span>
-                    </Select.Trigger>
-                    <Select.Content class="p-1">
-                      <Select.Group>
-                        {#each taskTypes as tt (tt.id)}
-                          <Select.Item value={tt.id} label={tt.name}>
-                            {tt.name}
-                            {#if tt.unit_rate}
-                              <span class="ml-1 text-xs text-muted-foreground">
-                                ({new Intl.NumberFormat("en-PH", {
-                                  style: "currency",
-                                  currency: OFFICIAL_CURRENCY,
-                                }).format(tt.unit_rate)}/{tt.unit})
-                              </span>
-                            {/if}
-                          </Select.Item>
-                        {/each}
-                      </Select.Group>
-                    </Select.Content>
-                  </Select.Root>
-                </Field.Field>
-
-                <!-- Priority -->
-                <Field.Field class="gap-1">
-                  <Field.Label for="task-priority">Priority</Field.Label>
-                  <Select.Root
-                    type="single"
-                    value={draft.priority}
-                    onValueChange={(v) => {
-                      draft.priority = v as any;
-                    }}
-                  >
-                    <Select.Trigger id="task-priority" class="w-full !h-9">
-                      {@const pmeta = PRIORITY_META[draft.priority]}
-                      <span class="flex items-center gap-2">
-                        <span
-                          class="size-2 rounded-full"
-                          style:background-color={pmeta.color}
-                        ></span>
-                        {pmeta.label}
-                      </span>
-                    </Select.Trigger>
-                    <Select.Content class="p-1">
-                      {#each Object.keys(PRIORITY_META) as priority (priority)}
-                        {@const pmeta =
-                          PRIORITY_META[priority as keyof typeof PRIORITY_META]}
-                        <Select.Item value={priority} label={pmeta.label}>
-                          <span class="flex items-center gap-2">
-                            <span
-                              class="size-2 rounded-full"
-                              style:background-color={pmeta.color}
-                            ></span>
-                            {pmeta.label}
-                          </span>
+                <Field.Label for="task-type">Task Type</Field.Label>
+                <Select.Root
+                  type="single"
+                  value={draft.task_type_id}
+                  disabled={fieldsLocked || taskTypes.length === 0}
+                  onValueChange={(v) => {
+                    draft.task_type_id = v;
+                  }}
+                >
+                  <Select.Trigger id="task-type" size="md" class="w-full">
+                    <span class="truncate">
+                      {taskTypes.find((tt) => tt.id === draft.task_type_id)
+                        ?.name ?? "Select..."}
+                    </span>
+                  </Select.Trigger>
+                  <Select.Content class="p-1">
+                    <Select.Group>
+                      {#each taskTypes as tt (tt.id)}
+                        <Select.Item value={tt.id} label={tt.name}>
+                          {tt.name}
+                          {#if tt.unit_rate}
+                            <span class="ml-1 text-xs text-base-content/60">
+                              ({new Intl.NumberFormat("en-PH", {
+                                style: "currency",
+                                currency: OFFICIAL_CURRENCY,
+                              }).format(tt.unit_rate)}/{tt.unit})
+                            </span>
+                          {/if}
                         </Select.Item>
+                      {/each}
+                    </Select.Group>
+                  </Select.Content>
+                </Select.Root>
+              </Field.Field>
+
+              <!-- Priority -->
+              <Field.Field class="gap-1">
+                <Field.Label for="task-priority">Priority</Field.Label>
+                <Select.Root
+                  type="single"
+                  value={draft.priority}
+                  onValueChange={(v) => {
+                    draft.priority = v as any;
+                  }}
+                >
+                  <Select.Trigger id="task-priority" size="md" class="w-full">
+                    {@const pmeta = PRIORITY_META[draft.priority]}
+                    <span class="flex items-center gap-2">
+                      <span
+                        class="size-2 rounded-full"
+                        style:background-color={pmeta.color}
+                      ></span>
+                      {pmeta.label}
+                    </span>
+                  </Select.Trigger>
+                  <Select.Content class="p-1">
+                    {#each Object.keys(PRIORITY_META) as priority (priority)}
+                      {@const pmeta =
+                        PRIORITY_META[priority as keyof typeof PRIORITY_META]}
+                      <Select.Item value={priority} label={pmeta.label}>
+                        <span class="flex items-center gap-2">
+                          <span
+                            class="size-2 rounded-full"
+                            style:background-color={pmeta.color}
+                          ></span>
+                          {pmeta.label}
+                        </span>
+                      </Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+              </Field.Field>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <!-- Due Date -->
+              <Field.Field class="gap-1">
+                <Field.Label for="task-due">Due Date</Field.Label>
+                <Input
+                  id="task-due"
+                  type="date"
+                  bind:value={dueDateInput}
+                  oninput={(event) => onDateChange(event.currentTarget.value)}
+                />
+              </Field.Field>
+
+              <!-- Assigned To -->
+              <Field.Field class="gap-1">
+                <Field.Label for="task-assignee">Assigned To</Field.Label>
+                {#if isNew}
+                  <Select.Root
+                    type="single"
+                    value={assigneeId}
+                    onValueChange={(v) => (assigneeId = v)}
+                  >
+                    <Select.Trigger id="task-assignee" size="md" class="w-full">
+                      <span class="truncate">
+                        {assigneeId ? userName(assigneeId) : "Select member..."}
+                      </span>
+                    </Select.Trigger>
+                    <Select.Content class="p-1">
+                      {#each assignableUsers as user (user.id)}
+                        <Select.Item value={user.id} label={user.full_name}>
+                          {user.full_name}
+                        </Select.Item>
+                      {:else}
+                        <div class="px-2 py-1.5 text-xs text-base-content/60">
+                          No workspace members available.
+                        </div>
                       {/each}
                     </Select.Content>
                   </Select.Root>
-                </Field.Field>
-              </div>
-
-              <div class="grid grid-cols-2 gap-4">
-                <!-- Due Date -->
-                <Field.Field class="gap-1">
-                  <Field.Label for="task-due">Due Date</Field.Label>
-                  <Input
-                    id="task-due"
-                    type="date"
-                    bind:value={dueDateInput}
-                    oninput={(event) => onDateChange(event.currentTarget.value)}
-                  />
-                </Field.Field>
-
-                <!-- Assigned To -->
-                <Field.Field class="gap-1">
-                  <Field.Label for="task-assignee">Assigned To</Field.Label>
-                  {#if isNew}
-                    <Select.Root
-                      type="single"
-                      value={assigneeId}
-                      onValueChange={(v) => (assigneeId = v)}
-                    >
-                      <Select.Trigger id="task-assignee" class="w-full !h-9">
-                        <span class="truncate">
-                          {assigneeId
-                            ? userName(assigneeId)
-                            : "Select member..."}
-                        </span>
-                      </Select.Trigger>
-                      <Select.Content class="p-1">
-                        {#each assignableUsers as user (user.id)}
-                          <Select.Item value={user.id} label={user.full_name}>
-                            {user.full_name}
-                          </Select.Item>
-                        {:else}
-                          <div
-                            class="px-2 py-1.5 text-xs text-muted-foreground"
-                          >
-                            No project members. Add members first.
-                          </div>
-                        {/each}
-                      </Select.Content>
-                    </Select.Root>
-                  {:else}
-                    <Select.Root
-                      type="single"
-                      value={activeAssigneeId}
-                      disabled={fieldsLocked}
-                    >
-                      <Select.Trigger id="task-assignee" class="w-full !h-9">
-                        <span class="truncate">
-                          {activeAssigneeId
-                            ? userName(activeAssigneeId)
-                            : "Unassigned"}
-                        </span>
-                      </Select.Trigger>
-                      <Select.Content class="p-1">
-                        {#each users as user (user.id)}
-                          <Select.Item value={user.id} label={user.full_name}>
-                            {user.full_name}
-                          </Select.Item>
-                        {:else}
-                          <div
-                            class="px-2 py-1.5 text-xs text-muted-foreground"
-                          >
-                            No assignable users.
-                          </div>
-                        {/each}
-                      </Select.Content>
-                    </Select.Root>
-                  {/if}
-                </Field.Field>
-              </div>
-
-              <!-- Links -->
-              <Field.Field class="gap-1">
-                <Field.Label for="task-link-input">Links</Field.Label>
-                <div class="flex items-center gap-2">
-                  <Input
-                    id="task-link-input"
-                    bind:value={newLinkUrl}
-                    placeholder="https://..."
-                    class="flex-1 h-9"
-                    disabled={fieldsLocked}
-                    onkeydown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addLink(newLinkUrl);
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="outline"
-                    class="h-9 w-9"
-                    onclick={() => addLink(newLinkUrl)}
-                    disabled={fieldsLocked || !newLinkUrl.trim()}
-                    aria-label="Add link"
+                {:else}
+                  <Select.Root
+                    type="single"
+                    value={activeAssigneeId}
+                    onValueChange={(v) => changeAssignee(v)}
+                    disabled={fieldsLocked || !isPM || assigning}
                   >
-                    <PlusIcon class="size-4" />
-                  </Button>
-                </div>
-                {#if draft.links && draft.links.length > 0}
-                  <Item.Group class="pt-2 space-y-0 gap-2">
-                    {#each draft.links as link (link.id || link.url)}
-                      <Item.Root variant="outline" class="h-9 px-3! py-0!">
-                        {#snippet child({ props })}
-                          <a
-                            {...props}
-                            href={link.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            <Item.Media variant="icon">
-                              <ExternalLinkIcon />
-                            </Item.Media>
-                            <Item.Content>
-                              <Item.Title class="truncate font-normal"
-                                >{link.url}</Item.Title
+                    <Select.Trigger id="task-assignee" size="md" class="w-full">
+                      <span class="truncate">
+                        {activeAssigneeId
+                          ? userName(activeAssigneeId)
+                          : "Unassigned"}
+                      </span>
+                    </Select.Trigger>
+                    <Select.Content class="p-1">
+                      {#each assignableUsers as user (user.id)}
+                        <Select.Item value={user.id} label={user.full_name}>
+                          {user.full_name}
+                        </Select.Item>
+                      {:else}
+                        <div class="px-2 py-1.5 text-xs text-base-content/60">
+                          No assignable users.
+                        </div>
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                {/if}
+              </Field.Field>
+            </div>
+
+            <!-- Links -->
+            <Field.Field class="gap-1">
+              <Field.Label for="task-link-input">Links</Field.Label>
+              <div class="flex items-center gap-2">
+                <Input
+                  id="task-link-input"
+                  bind:value={newLinkUrl}
+                  placeholder="https://..."
+                  size="md"
+                  class="flex-1"
+                  disabled={fieldsLocked}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addLink(newLinkUrl);
+                    }
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="md"
+                  icon
+                  onclick={() => addLink(newLinkUrl)}
+                  disabled={fieldsLocked || !newLinkUrl.trim()}
+                  aria-label="Add link"
+                >
+                  <PlusIcon class="size-4" />
+                </Button>
+              </div>
+              {#if draft.links && draft.links.length > 0}
+                <Item.Group class="pt-2 space-y-0 gap-2">
+                  {#each draft.links as link (link.id || link.url)}
+                    <Item.Root variant="outline" class="h-9 px-3! py-0!">
+                      {#snippet child({ props })}
+                        <a
+                          {...props}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <Item.Media variant="icon">
+                            <ExternalLinkIcon />
+                          </Item.Media>
+                          <Item.Content>
+                            <Item.Title class="truncate font-normal"
+                              >{link.url}</Item.Title
+                            >
+                          </Item.Content>
+                          <Item.Actions>
+                            <Button
+                              variant="ghost"
+                              size="md"
+                              icon
+                              onclick={() => removeLink(link.id || link.url)}
+                              disabled={fieldsLocked}
+                              aria-label="Remove link"
+                            >
+                              <XIcon class="size-4" />
+                            </Button>
+                          </Item.Actions>
+                        </a>
+                      {/snippet}
+                    </Item.Root>
+                  {/each}
+                </Item.Group>
+              {/if}
+            </Field.Field>
+          </Field.FieldGroup>
+        {/if}
+      </Tabs.Content>
+
+      {#if !isNew}
+        <!-- COMMENTS TAB -->
+        <Tabs.Content value="comments" class="space-y-4 pt-3">
+          <Card.Root class="p-3!">
+            <Card.Content class="space-y-4 p-0!">
+              {#if comments.length === 0}
+                <Empty.Root>
+                  <Empty.Media variant="icon"><MessageSquareIcon /></Empty.Media
+                  >
+                  <Empty.Header>
+                    <Empty.Title>No comments yet</Empty.Title>
+                    <Empty.Description
+                      >Start the conversation with the project manager.</Empty.Description
+                    >
+                  </Empty.Header>
+                </Empty.Root>
+              {:else}
+                <div class="comment-scroll">
+                  <Item.Group class="space-y-0 gap-2">
+                    {#each comments as comment (comment.id)}
+                      <Item.Root variant="outline">
+                        <Item.Media>
+                          <Avatar class="size-8">
+                            <AvatarFallback class="text-xs"
+                              >{userInitials(comment.author_id)}</AvatarFallback
+                            >
+                          </Avatar>
+                        </Item.Media>
+                        <Item.Content>
+                          <Item.Title class="flex items-center gap-1.5">
+                            {userName(comment.author_id)}
+                            {#if comment.author_id === currentUser?.id}
+                              <span class="text-xs text-base-content/60"
+                                >(you)</span
                               >
-                            </Item.Content>
-                            <Item.Actions>
+                            {/if}
+                            <span
+                              class="ml-auto text-xs font-normal text-base-content/60"
+                            >
+                              • {timeAgo(comment.created_at)}
+                            </span>
+                          </Item.Title>
+                          {#if editingCommentId === comment.id}
+                            <Textarea
+                              bind:value={editBody}
+                              class="mt-1 min-h-[60px] resize-none"
+                            />
+                            <div class="mt-1 flex gap-2">
                               <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                onclick={() => removeLink(link.id || link.url)}
-                                disabled={fieldsLocked}
-                                aria-label="Remove link"
+                                size="md"
+                                onclick={() => saveEditComment(comment.id)}
+                                disabled={!editBody.trim()}
                               >
-                                <XIcon class="size-4" />
+                                Save
                               </Button>
-                            </Item.Actions>
-                          </a>
-                        {/snippet}
+                              <Button
+                                size="md"
+                                variant="outline"
+                                onclick={cancelEditComment}>Cancel</Button
+                              >
+                            </div>
+                          {:else}
+                            <Item.Description class="whitespace-pre-wrap"
+                              >{comment.body}</Item.Description
+                            >
+                          {/if}
+                        </Item.Content>
+                        {#if comment.author_id === currentUser?.id && editingCommentId !== comment.id}
+                          <Item.Actions>
+                            <DropdownMenu.DropdownMenu>
+                              <DropdownMenu.DropdownMenuTrigger>
+                                <Button
+                                  variant="ghost"
+                                  size="md"
+                                  icon
+                                  aria-label="Comment options"
+                                >
+                                  <EllipsisIcon class="size-4" />
+                                </Button>
+                              </DropdownMenu.DropdownMenuTrigger>
+                              <DropdownMenu.DropdownMenuContent align="end">
+                                <DropdownMenu.DropdownMenuItem
+                                  onclick={() =>
+                                    startEditComment(comment.id, comment.body)}
+                                >
+                                  <PencilIcon class="size-4" />
+                                  Edit
+                                </DropdownMenu.DropdownMenuItem>
+                                <DropdownMenu.DropdownMenuItem
+                                  variant="destructive"
+                                  onclick={() => deleteComment(comment.id)}
+                                >
+                                  <Trash2Icon class="size-4" />
+                                  Delete
+                                </DropdownMenu.DropdownMenuItem>
+                              </DropdownMenu.DropdownMenuContent>
+                            </DropdownMenu.DropdownMenu>
+                          </Item.Actions>
+                        {/if}
                       </Item.Root>
                     {/each}
                   </Item.Group>
-                {/if}
-              </Field.Field>
-            </Field.FieldGroup>
-          {/if}
+                </div>
+              {/if}
+
+              <Separator />
+
+              <!-- Composer -->
+              <InputGroup.Root>
+                <InputGroup.Textarea
+                  bind:value={commentBody}
+                  placeholder="Write a comment..."
+                  class="min-h-[50px]"
+                />
+                <InputGroup.Addon align="block-end">
+                  <InputGroup.Button
+                    variant="default"
+                    size="md"
+                    icon
+                    onclick={sendComment}
+                    disabled={!commentBody.trim() || commentSending}
+                    aria-label="Send comment"
+                  >
+                    {#if commentSending}
+                      <RefreshCwIcon class="size-4 animate-spin" />
+                    {:else}
+                      <SendIcon class="size-4" />
+                    {/if}
+                  </InputGroup.Button>
+                </InputGroup.Addon>
+              </InputGroup.Root>
+            </Card.Content>
+          </Card.Root>
         </Tabs.Content>
+      {/if}
+    </Tabs.Root>
+  {/if}
+{/snippet}
 
-        {#if !isNew}
-          <!-- COMMENTS TAB -->
-          <Tabs.Content value="comments" class="space-y-4 pt-3">
-            <Card.Root class="p-3!">
-              <Card.Content class="space-y-4 p-0!">
-                {#if comments.length === 0}
-                  <Empty.Root>
-                    <Empty.Media variant="icon"
-                      ><MessageSquareIcon /></Empty.Media
-                    >
-                    <Empty.Header>
-                      <Empty.Title>No comments yet</Empty.Title>
-                      <Empty.Description
-                        >Start the conversation with the project manager.</Empty.Description
-                      >
-                    </Empty.Header>
-                  </Empty.Root>
-                {:else}
-                  <div class="comment-scroll">
-                    <Item.Group class="space-y-0 gap-2">
-                      {#each comments as comment (comment.id)}
-                        <Item.Root variant="outline">
-                          <Item.Media>
-                            <Avatar class="size-8">
-                              <AvatarFallback class="text-xs"
-                                >{userInitials(
-                                  comment.author_id,
-                                )}</AvatarFallback
-                              >
-                            </Avatar>
-                          </Item.Media>
-                          <Item.Content>
-                            <Item.Title class="flex items-center gap-1.5">
-                              {userName(comment.author_id)}
-                              {#if comment.author_id === currentUser?.id}
-                                <span class="text-xs text-muted-foreground"
-                                  >(you)</span
-                                >
-                              {/if}
-                              <span
-                                class="ml-auto text-xs font-normal text-muted-foreground"
-                              >
-                                • {timeAgo(comment.created_at)}
-                              </span>
-                            </Item.Title>
-                            {#if editingCommentId === comment.id}
-                              <Textarea
-                                bind:value={editBody}
-                                class="mt-1 min-h-[60px] resize-none"
-                              />
-                              <div class="mt-1 flex gap-2">
-                                <Button
-                                  size="sm"
-                                  onclick={() => saveEditComment(comment.id)}
-                                  disabled={!editBody.trim()}
-                                >
-                                  Save
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onclick={cancelEditComment}>Cancel</Button
-                                >
-                              </div>
-                            {:else}
-                              <Item.Description class="whitespace-pre-wrap"
-                                >{comment.body}</Item.Description
-                              >
-                            {/if}
-                          </Item.Content>
-                          {#if comment.author_id === currentUser?.id && editingCommentId !== comment.id}
-                            <Item.Actions>
-                              <DropdownMenu.DropdownMenu>
-                                <DropdownMenu.DropdownMenuTrigger>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    aria-label="Comment options"
-                                  >
-                                    <EllipsisIcon class="size-4" />
-                                  </Button>
-                                </DropdownMenu.DropdownMenuTrigger>
-                                <DropdownMenu.DropdownMenuContent align="end">
-                                  <DropdownMenu.DropdownMenuItem
-                                    onclick={() =>
-                                      startEditComment(
-                                        comment.id,
-                                        comment.body,
-                                      )}
-                                  >
-                                    <PencilIcon class="size-4" />
-                                    Edit
-                                  </DropdownMenu.DropdownMenuItem>
-                                  <DropdownMenu.DropdownMenuItem
-                                    variant="destructive"
-                                    onclick={() => deleteComment(comment.id)}
-                                  >
-                                    <Trash2Icon class="size-4" />
-                                    Delete
-                                  </DropdownMenu.DropdownMenuItem>
-                                </DropdownMenu.DropdownMenuContent>
-                              </DropdownMenu.DropdownMenu>
-                            </Item.Actions>
-                          {/if}
-                        </Item.Root>
-                      {/each}
-                    </Item.Group>
-                  </div>
-                {/if}
-
-                <Separator />
-
-                <!-- Composer -->
-                <InputGroup.Root>
-                  <InputGroup.Textarea
-                    bind:value={commentBody}
-                    placeholder="Write a comment..."
-                    class="min-h-[50px]"
-                  />
-                  <InputGroup.Addon align="block-end">
-                    <InputGroup.Button
-                      variant="default"
-                      size="icon-sm"
-                      onclick={sendComment}
-                      disabled={!commentBody.trim() || commentSending}
-                      aria-label="Send comment"
-                    >
-                      {#if commentSending}
-                        <RefreshCwIcon class="size-4 animate-spin" />
-                      {:else}
-                        <SendIcon class="size-4" />
-                      {/if}
-                    </InputGroup.Button>
-                  </InputGroup.Addon>
-                </InputGroup.Root>
-              </Card.Content>
-            </Card.Root>
-          </Tabs.Content>
-        {/if}
-      </Tabs.Root>
-    {/if}
-
-    {#if (task || isNew) && !loading && !error && activeTab !== "comments"}
-      <Dialog.Footer class="gap-2">
-        {#if !isNew}
-          <div class="flex-1">
-            <Button
-              variant="outline"
-              class={cn(
-                "h-9 text-destructive hover:text-destructive hover:bg-destructive/10",
-                deleteConfirm && "bg-destructive/10",
-              )}
-              onclick={handleDelete}
-            >
-              <Trash2Icon class="size-4" />
-              {deleteConfirm ? "Click again to confirm" : "Delete task"}
-            </Button>
-          </div>
-        {/if}
-        <div class="flex gap-2 {isNew ? 'w-full justify-end' : ''}">
-          <Button variant="outline" onclick={() => (open = false)} class="h-9"
-            >Cancel</Button
-          >
+{#snippet detailFooter(footerClass: string)}
+  {#if (task || isNew) && !loading && !error && activeTab !== "comments"}
+    <Dialog.Footer class={cn("gap-2", footerClass)}>
+      {#if !isNew}
+        <div class="flex-1">
           <Button
-            onclick={handleSave}
-            disabled={saving || (!isNew && fieldsLocked)}
-            class="gap-1.5 h-9"
+            variant="outline"
+            size="md"
+            class={cn(
+              "text-error hover:text-error hover:bg-error/10",
+              deleteConfirm && "bg-error/10",
+            )}
+            onclick={handleDelete}
           >
-            <SaveIcon class="size-4" />
-            {saving
-              ? isNew
-                ? "Creating..."
-                : "Saving..."
-              : isNew
-                ? "Create Task"
-                : "Save Changes"}
+            <Trash2Icon class="size-4" />
+            {deleteConfirm ? "Click again to confirm" : "Delete task"}
           </Button>
-        </div></Dialog.Footer
+        </div>
+      {/if}
+      <div class="flex gap-2 {isNew ? 'w-full justify-end' : ''}">
+        <Button variant="outline" onclick={() => (open = false)} size="md"
+          >Cancel</Button
+        >
+        <Button
+          onclick={handleSave}
+          disabled={saving || (!isNew && fieldsLocked)}
+          size="md"
+          class="gap-1.5"
+        >
+          <SaveIcon class="size-4" />
+          {saving
+            ? isNew
+              ? "Creating..."
+              : "Saving..."
+            : isNew
+              ? "Create Task"
+              : "Save Changes"}
+        </Button>
+      </div></Dialog.Footer
+    >
+  {/if}
+{/snippet}
+
+{#if presentation === "drawer"}
+  <div class="drawer drawer-end">
+    <input
+      id={drawerToggleId}
+      type="checkbox"
+      class="drawer-toggle"
+      bind:checked={open}
+    />
+    <div class="drawer-side z-50">
+      <label
+        for={drawerToggleId}
+        aria-label="Close task details"
+        class="drawer-overlay"
+      ></label>
+      <div
+        class="relative flex h-full min-h-full w-screen flex-col bg-base-100 text-base-content shadow-xl sm:w-[42rem]"
       >
-    {/if}
-  </Dialog.Content>
-</Dialog.Root>
+        <div class="min-h-0 flex-1 overflow-y-auto p-5">
+          {@render detailBody()}
+        </div>
+        {@render detailFooter(
+          "mt-0 shrink-0 border-t border-base-300 bg-base-100 px-5 py-4",
+        )}
+      </div>
+    </div>
+  </div>
+{:else}
+  <Dialog.Root bind:open>
+    <Dialog.Content class="max-h-[90vh] overflow-y-auto !max-w-xl p-4!">
+      {@render detailBody()}
+      {@render detailFooter("")}
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
 
 <!-- Submit work dialog -->
 <Dialog.Root bind:open={submitOpen}>
@@ -1080,10 +1144,15 @@
       </Field.Field>
     </Field.FieldGroup>
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => (submitOpen = false)} class="h-9"
+      <Button variant="outline" onclick={() => (submitOpen = false)} size="md"
         >Cancel</Button
       >
-      <Button disabled={submitting} onclick={handleSubmit} class="gap-1.5">
+      <Button
+        disabled={submitting}
+        onclick={handleSubmit}
+        size="md"
+        class="gap-1.5"
+      >
         <SendIcon class="size-4" />
         {submitting ? "Submitting..." : "Submit for Review"}
       </Button>
@@ -1103,17 +1172,25 @@
     <Field.FieldGroup>
       <Field.Field>
         <Field.Label>Decision</Field.Label>
-        <div class="flex gap-2">
-          {#each Object.entries(decisionLabel) as [value, label] (value)}
-            <Button
-              variant={reviewDecision === value ? "default" : "outline"}
-              size="sm"
-              onclick={() => (reviewDecision = value as ApprovalDecision)}
-            >
-              {label}
-            </Button>
+        <form class="filter">
+          <input
+            class="btn btn-square"
+            type="reset"
+            value="×"
+            aria-label="Reset decision"
+            onclick={() => (reviewDecision = "")}
+          />
+          {#each Object.entries(decisionLabel) as [ApprovalDecision, string][] as [value, label] (value)}
+            <input
+              class="btn"
+              type="radio"
+              name="review-decision"
+              {value}
+              bind:group={reviewDecision}
+              aria-label={label}
+            />
           {/each}
-        </div>
+        </form>
       </Field.Field>
       <Field.Field>
         <Field.Label for="review-remarks">Remarks</Field.Label>
@@ -1129,7 +1206,11 @@
       <Button variant="outline" onclick={() => (reviewOpen = false)}
         >Cancel</Button
       >
-      <Button disabled={reviewing} onclick={handleReview} class="gap-1.5">
+      <Button
+        disabled={reviewing || !reviewDecision}
+        onclick={handleReview}
+        class="gap-1.5"
+      >
         {#if reviewDecision === "approved"}
           <CheckIcon class="size-4" />
         {:else if reviewDecision === "rejected"}
@@ -1137,7 +1218,11 @@
         {:else}
           <RefreshCwIcon class="size-4" />
         {/if}
-        {reviewing ? "Submitting..." : decisionLabel[reviewDecision]}
+        {reviewing
+          ? "Submitting..."
+          : reviewDecision
+            ? decisionLabel[reviewDecision]
+            : "Select a decision"}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
@@ -1151,6 +1236,6 @@
     outline: none;
   }
   .comment-scroll:focus-visible {
-    outline: 3px solid rgb(120 149 232 / 22%);
+    outline: 3px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
   }
 </style>

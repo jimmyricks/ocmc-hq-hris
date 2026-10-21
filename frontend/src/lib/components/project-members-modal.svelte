@@ -1,13 +1,13 @@
 <script lang="ts">
-  import * as Dialog from "$lib/components/native/dialog/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
   import {
     Avatar,
     AvatarFallback,
-  } from "$lib/components/native/avatar/index.js";
-  import { Separator } from "$lib/components/native/separator/index.js";
+  } from "$lib/components/ui/avatar/index.js";
+  import { Separator } from "$lib/components/ui/separator/index.js";
   import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import type {
@@ -133,7 +133,7 @@
                   {user.full_name}
                 </Select.Item>
               {:else}
-                <div class="px-2 py-1.5 text-xs text-muted-foreground">
+                <div class="px-2 py-1.5 text-xs text-base-content/60">
                   All users are already members
                 </div>
               {/each}
@@ -151,9 +151,9 @@
       <div class="space-y-2">
         <p class="text-sm font-medium">Current Members</p>
         {#if loading}
-          <p class="text-sm text-muted-foreground">Loading...</p>
+          <p class="text-sm text-base-content/60">Loading...</p>
         {:else if members.length === 0}
-          <p class="text-sm text-muted-foreground">No members yet.</p>
+          <p class="text-sm text-base-content/60">No members yet.</p>
         {:else}
           <div class="space-y-1">
             {#each members as member (member.id)}
@@ -168,14 +168,14 @@
                   <p class="text-sm font-medium truncate">
                     {user?.full_name ?? member.user_id}
                   </p>
-                  <p class="text-xs text-muted-foreground truncate">
+                  <p class="text-xs text-base-content/60 truncate">
                     {user?.email ?? ""}
                   </p>
                 </div>
                 <Button
                   size="sm"
                   variant="ghost"
-                  class="text-destructive hover:text-destructive"
+                  class="text-error hover:text-error"
                   onclick={() => handleRemove(member)}
                 >
                   Remove

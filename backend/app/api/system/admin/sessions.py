@@ -17,13 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.framework.models.auth import UserSession
-from app.core.security import CurrentUser, require_authenticated_user
+from app.core.security import (
+    CurrentUser,
+    is_system_admin_user,
+    require_authenticated_user,
+)
 
 router = APIRouter(prefix="/admin/sessions", tags=["admin"])
 
 
 def _require_admin(current_user: CurrentUser) -> None:
-    if not current_user.is_superuser and "Administrator" not in current_user.roles:
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 

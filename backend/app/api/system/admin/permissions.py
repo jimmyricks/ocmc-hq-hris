@@ -10,7 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.security import get_current_user_from_token, CurrentUser
+from app.core.security import (
+    get_current_user_from_token,
+    CurrentUser,
+    is_system_admin_user,
+)
 from app.core.framework.models.auth import User, Role, EntityPermission
 from app.core.constants.permissions import (
     ROW_SCOPE_ALL,
@@ -123,7 +127,7 @@ async def get_entities_by_module(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Get all entities grouped by module for permission management."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied")
     
     from app.core.framework.models.ordering import ModuleOrder, EntityOrder
@@ -164,7 +168,7 @@ async def get_permission_matrix(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Get permission matrix for all roles and entities."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied")
     
     entities = MetaRegistry.list_all()
@@ -177,7 +181,7 @@ async def get_permission_matrix(
     
     matrix = []
     for role in roles:
-        is_system_manager = role.name == "SystemManager"
+        is_system_manager = role.name in {"SystemManager", "Administrator"}
         role_perms = {p.entity_name: p for p in role.permissions}
         row = {
             "role_id": role.id,
@@ -206,7 +210,7 @@ async def get_role_permissions(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Get all permissions for a specific role."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied")
     
     result = await db.execute(
@@ -220,7 +224,7 @@ async def get_role_permissions(
     entities = MetaRegistry.list_all()
     entity_names = [e.name for e in entities]
 
-    is_system_manager = role.name == "SystemManager"
+    is_system_manager = role.name in {"SystemManager", "Administrator"}
     role_perms = {p.entity_name: p for p in role.permissions}
 
     entities = {
@@ -253,7 +257,7 @@ async def update_role_permissions(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Update all permissions for a specific role."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied")
     
     result = await db.execute(
@@ -267,7 +271,7 @@ async def update_role_permissions(
             message="Role not found"
         )
     
-    if role.name == "SystemManager":
+    if role.name in {"SystemManager", "Administrator"}:
         return api_response(
             status="error",
             message="Cannot modify SystemManager permissions"
@@ -286,7 +290,10 @@ async def update_role_permissions(
     entities = _normalize_entities_input(permissions, all_entities)
 
     for entity_name, perm_data in entities.items():
-        if entity_name in ["user", "role", "entity_permission"] and role.name != "SystemManager":
+        if entity_name in ["user", "role", "entity_permission"] and role.name not in {
+            "SystemManager",
+            "Administrator",
+        }:
             continue
 
         permission = EntityPermission(

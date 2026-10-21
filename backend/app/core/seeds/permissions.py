@@ -18,7 +18,23 @@ from app.core.framework.models.auth import Role, EntityPermission
 # All entities that appear in the sidebar for operational modules.
 # In the barebones backend no operational modules are installed; add entities
 # here when business modules are reintroduced.
-OPERATIONAL_ENTITIES: list[str] = []
+OPERATIONAL_ENTITIES: list[str] = [
+    "project",
+    "project_member",
+    "task_type",
+    "task_category",
+    "task",
+    "task_assignment",
+    "task_submission",
+    "task_approval",
+    "task_link",
+    "planner_event",
+    "schedule_series",
+    "schedule_occurrence",
+    "workspace_resource",
+    "workspace_team",
+    "resource_booking",
+]
 
 # Entities only SystemManager can access
 ADMIN_ENTITIES = [
@@ -26,8 +42,27 @@ ADMIN_ENTITIES = [
     "role",
     "entity_permission",
     "audit_log",
+    "oc_audit_log",
     "error_log",
     "api_key",
+    "user_session",
+    "ledger",
+    "model",
+    "model_definition",
+    "entity_definition",
+    "workflow",
+    "workflow_state",
+    "workflow_action",
+    "workflow_state_link",
+    "workflow_transition",
+    "module_order",
+    "entity_order",
+    "payroll_line_item",
+    "payroll_period",
+    "payroll_entry",
+    "invoice",
+    "payroll_settings",
+    "user_task_rate",
 ]
 
 _FULL = dict(
@@ -59,21 +94,68 @@ async def seed_entity_permissions(db: AsyncSession) -> SeedResult:
     roles_result = await db.execute(select(Role))
     roles = {r.name: r for r in roles_result.scalars().all()}
 
+    non_admin_role_ids = [
+        role.id
+        for role in roles.values()
+        if role.name not in {"SystemManager", "Administrator"}
+    ]
+    if non_admin_role_ids:
+        legacy_admin_grants = await db.scalars(
+            select(EntityPermission).where(
+                EntityPermission.role_id.in_(non_admin_role_ids),
+                EntityPermission.entity_name.in_(ADMIN_ENTITIES),
+            )
+        )
+        for permission in legacy_admin_grants:
+            for field, value in _NONE.items():
+                setattr(permission, field, value)
+    hr_role = roles.get("HR")
+    if hr_role:
+        legacy_operational_grants = await db.scalars(
+            select(EntityPermission).where(
+                EntityPermission.role_id == hr_role.id,
+                EntityPermission.entity_name.in_(OPERATIONAL_ENTITIES),
+            )
+        )
+        for permission in legacy_operational_grants:
+            for field, value in _NONE.items():
+                setattr(permission, field, value)
+
     permission_matrix = []
 
-    # SystemManager: full access to all (operational + admin)
-    sm = roles.get("SystemManager")
-    if sm:
+    # System admins: full access to all (operational + admin)
+    for system_admin_name in ("SystemManager", "Administrator"):
+        system_admin = roles.get(system_admin_name)
+        if not system_admin:
+            continue
         for entity in OPERATIONAL_ENTITIES + ADMIN_ENTITIES:
-            permission_matrix.append((sm, entity, _FULL))
+            permission_matrix.append((system_admin, entity, _FULL))
 
-    # Technician: CRUD on operational, no admin
-    tech = roles.get("Technician")
-    if tech:
+    # Workspace supervisors: operational CRUD, no system administration.
+    for supervisor_name in ("ProjectManager", "Technician"):
+        supervisor = roles.get(supervisor_name)
+        if not supervisor:
+            continue
         for entity in OPERATIONAL_ENTITIES:
-            permission_matrix.append((tech, entity, _CRUD))
+            permission_matrix.append((supervisor, entity, _CRUD))
 
-    # Viewer: read-only on operational, no admin
+    # Workspace employees can read operational records and submit assigned work.
+    employee = roles.get("Employee")
+    if employee:
+        for entity in OPERATIONAL_ENTITIES:
+            permission_matrix.append(
+                (
+                    employee,
+                    entity,
+                    {
+                        **_READ,
+                        "can_create": entity == "task_submission",
+                        "in_sidebar": entity
+                        in {"project", "task", "task_submission"},
+                    },
+                )
+            )
+
     viewer = roles.get("Viewer")
     if viewer:
         for entity in OPERATIONAL_ENTITIES:
@@ -85,7 +167,14 @@ async def seed_entity_permissions(db: AsyncSession) -> SeedResult:
             .where(EntityPermission.role_id == role.id)
             .where(EntityPermission.entity_name == entity_name)
         )
-        if existing.scalar_one_or_none():
+        existing_permission = existing.scalar_one_or_none()
+        if existing_permission:
+            if role.name in {"SystemManager", "Administrator"}:
+                for field, value in perms.items():
+                    setattr(existing_permission, field, value)
+            elif entity_name in ADMIN_ENTITIES:
+                for field, value in _NONE.items():
+                    setattr(existing_permission, field, value)
             result.skipped += 1
             continue
 

@@ -4,7 +4,6 @@
   import logo from "$lib/assets/OCMClogo.png";
   import { getToken, getUser } from "$lib/auth";
   import { workspaceApi } from "$lib/workspaces/api";
-  import { setActiveWorkspaceId } from "$lib/workspaces/context";
   import type { WorkspaceContext } from "$lib/workspaces/types";
   import NavProjects from "./nav-projects.svelte";
   import NavUser from "./nav-user.svelte";
@@ -21,10 +20,8 @@
   import XIcon from "@lucide/svelte/icons/x";
 
   let {
-    open = false,
     onClose,
   }: {
-    open?: boolean;
     onClose?: () => void;
   } = $props();
 
@@ -37,6 +34,10 @@
   const operationsItems = [
     { title: "Payroll", url: "/payroll", icon: BanknoteIcon },
     { title: "Task rates", url: "/payroll/tasks-rates", icon: ListChecksIcon },
+  ];
+
+  const peopleItems = [
+    { title: "User directory", url: "/hr/directory", icon: ClipboardListIcon },
   ];
 
   const toolsItems = [
@@ -53,23 +54,36 @@
   ];
 
   let workspaceContext = $state<WorkspaceContext | null>(null);
-  let switchingWorkspace = $state(false);
   const user = $derived(browser ? getUser() : null);
-  const isAdministrator = $derived(
-    Boolean(
-      user?.is_superuser ||
-        user?.roles?.some((role) =>
-          ["Administrator", "SystemManager"].includes(role),
-        ),
-    ),
+  const isSystemAdmin = $derived(
+    workspaceContext?.capabilities?.is_system_admin ??
+      Boolean(
+        user?.is_superuser ||
+          user?.roles?.some((role) =>
+            ["Administrator", "SystemManager"].includes(role),
+          ),
+      ),
   );
-  const canSwitchWorkspace = $derived(
-    isAdministrator || (workspaceContext?.workspaces.length ?? 0) > 1,
+  const canManagePayroll = $derived(
+    Boolean(workspaceContext?.capabilities?.can_manage_payroll),
   );
+  const canViewHRDirectory = $derived(
+    Boolean(workspaceContext?.capabilities?.can_view_hr_directory),
+  );
+  const visibleOperationsItems = $derived(
+    canManagePayroll || isSystemAdmin ? operationsItems : [],
+  );
+  const visiblePeopleItems = $derived(canViewHRDirectory ? peopleItems : []);
+  const visibleAdminItems = $derived(isSystemAdmin ? adminItems : []);
   const activeWorkspaceLabel = $derived(
     workspaceContext?.workspaces.find(
       (workspace) => workspace.id === workspaceContext?.active_workspace_id,
-    )?.name ?? (isAdministrator ? "All companies" : "Workspace"),
+    )?.name ??
+      (isSystemAdmin
+        ? "All companies"
+        : canManagePayroll
+          ? "HR workspace"
+          : "Workspace"),
   );
 
   $effect(() => {
@@ -77,32 +91,23 @@
     workspaceApi
       .getContext()
       .then((context) => (workspaceContext = context))
-      .catch((error) => console.error("Failed to load workspace context:", error));
+      .catch((error) =>
+        console.error("Failed to load workspace context:", error),
+      );
   });
-
-  async function handleWorkspaceChange(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    if (!value || switchingWorkspace) return;
-    const workspaceId = value === "all" ? null : value;
-    switchingWorkspace = true;
-    try {
-      await workspaceApi.select(workspaceId);
-      setActiveWorkspaceId(workspaceId);
-      window.location.reload();
-    } catch (error) {
-      console.error("Failed to switch workspace:", error);
-    } finally {
-      switchingWorkspace = false;
-    }
-  }
 
   function isActive(url: string) {
     if (url === "/payroll/tasks-rates") return page.url.pathname === url;
-    if (url === "/payroll") return page.url.pathname === "/payroll" ||
-      (page.url.pathname.startsWith("/payroll/") &&
-        !page.url.pathname.startsWith("/payroll/tasks-rates"));
+    if (url === "/payroll")
+      return (
+        page.url.pathname === "/payroll" ||
+        (page.url.pathname.startsWith("/payroll/") &&
+          !page.url.pathname.startsWith("/payroll/tasks-rates"))
+      );
     if (url === "/workflow") {
-      return page.url.pathname === url || page.url.pathname.startsWith("/workflow/");
+      return (
+        page.url.pathname === url || page.url.pathname.startsWith("/workflow/")
+      );
     }
     return page.url.pathname === url;
   }
@@ -112,109 +117,154 @@
   }
 </script>
 
-<aside class="hq-sidebar" data-open={open} aria-label="Main navigation">
-  <div class="hq-sidebar__brand">
-    <a href="/dashboard" class="hq-brand-link" onclick={closeAfterNavigate}>
-      <span class="hq-brand-mark">
-        <img src={logo} alt="" />
+<aside
+  class="flex min-h-full w-60 flex-col border-r border-base-300 bg-base-100 p-4"
+  aria-label="Main navigation"
+>
+  <div class="flex min-h-13 items-center gap-3 px-2 pb-4">
+    <a
+      href="/dashboard"
+      class="flex min-w-0 flex-1 items-center gap-2.5 text-base-content no-underline"
+      onclick={closeAfterNavigate}
+    >
+      <span
+        class="grid size-9 shrink-0 place-items-center rounded-lg border border-base-300 bg-base-100"
+      >
+        <img class="size-7 object-contain" src={logo} alt="" />
       </span>
-      <span class="hq-brand-copy">
-        <strong>OCMC HQ</strong>
-        <small>{activeWorkspaceLabel}</small>
+      <span class="grid min-w-0 gap-0.5">
+        <strong class="text-sm font-semibold tracking-tight">OCMC HQ</strong>
+        <small class="truncate text-xs text-base-content/60"
+          >{activeWorkspaceLabel}</small
+        >
       </span>
     </a>
-    <button
-      class="hq-mobile-close"
-      type="button"
+    <label
+      for="app-nav-drawer"
+      class="ml-auto grid size-8 place-items-center rounded-lg border border-base-300 bg-base-100 text-base-content hover:bg-base-200 lg:hidden"
       aria-label="Close navigation"
-      onclick={() => onClose?.()}
     >
-      <XIcon size={17} />
-    </button>
+      <XIcon size={16} aria-hidden="true" />
+    </label>
   </div>
 
-  {#if canSwitchWorkspace}
-    <label class="hq-workspace-switch">
-      <span>Company workspace</span>
-      <select
-        value={workspaceContext?.active_workspace_id ??
-          (workspaceContext?.is_global ? "all" : "")}
-        onchange={handleWorkspaceChange}
-        disabled={switchingWorkspace || !workspaceContext}
-        aria-label="Select company workspace"
-      >
-        {#if isAdministrator}
-          <option value="all">All companies</option>
-        {/if}
-        {#each workspaceContext?.workspaces ?? [] as workspace (workspace.id)}
-          <option value={workspace.id}>{workspace.name}</option>
-        {/each}
-      </select>
-    </label>
-  {/if}
-
-  <nav class="hq-sidebar__nav">
-    <div class="hq-nav-group">
-      <div class="hq-nav-group__heading">Workspace</div>
-      {#each workspaceItems as item (item.url)}
-        <a
-          class="hq-nav-link"
-          href={item.url}
-          aria-current={isActive(item.url) ? "page" : undefined}
-          onclick={closeAfterNavigate}
+  <nav class="flex flex-1 flex-col gap-4 overflow-y-auto py-4">
+    {#if workspaceItems.length}
+      <ul class="m-0 flex list-none flex-col gap-1 p-0">
+        <li
+          class="px-3 pb-1 pt-0 text-xs font-semibold uppercase tracking-wider text-base-content/60"
         >
-          <span class="hq-nav-link__icon"><item.icon size={17} /></span>
-          {item.title}
-        </a>
-      {/each}
-    </div>
+          Workspace
+        </li>
+        {#each workspaceItems as item (item.url)}
+          <li class="m-0 p-0">
+            <a
+              class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
+              href={item.url}
+              aria-current={isActive(item.url) ? "page" : undefined}
+              onclick={closeAfterNavigate}
+            >
+              <item.icon size={16} aria-hidden="true" />
+              {item.title}
+            </a>
+          </li>
+        {/each}
+      </ul>
+    {/if}
 
     <NavProjects {onClose} />
 
-    <div class="hq-nav-group">
-      <div class="hq-nav-group__heading">Operations</div>
-      {#each operationsItems as item (item.url)}
-        <a
-          class="hq-nav-link"
-          href={item.url}
-          aria-current={isActive(item.url) ? "page" : undefined}
-          onclick={closeAfterNavigate}
+    {#if visibleOperationsItems.length}
+      <ul class="m-0 flex list-none flex-col gap-1 p-0">
+        <li
+          class="px-3 pb-1 pt-0 text-xs font-semibold uppercase tracking-wider text-base-content/60"
         >
-          <span class="hq-nav-link__icon"><item.icon size={17} /></span>
-          {item.title}
-        </a>
-      {/each}
-    </div>
+          Operations
+        </li>
+        {#each visibleOperationsItems as item (item.url)}
+          <li class="m-0 p-0">
+            <a
+              class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
+              href={item.url}
+              aria-current={isActive(item.url) ? "page" : undefined}
+              onclick={closeAfterNavigate}
+            >
+              <item.icon size={16} aria-hidden="true" />
+              {item.title}
+            </a>
+          </li>
+        {/each}
+      </ul>
+    {/if}
 
-    <div class="hq-nav-group">
-      <div class="hq-nav-group__heading">Creator tools</div>
-      {#each toolsItems as item (item.url)}
-        <a
-          class="hq-nav-link"
-          href={item.url}
-          aria-current={isActive(item.url) ? "page" : undefined}
-          onclick={closeAfterNavigate}
+    {#if visiblePeopleItems.length}
+      <ul class="m-0 flex list-none flex-col gap-1 p-0">
+        <li
+          class="px-3 pb-1 pt-0 text-xs font-semibold uppercase tracking-wider text-base-content/60"
         >
-          <span class="hq-nav-link__icon"><item.icon size={17} /></span>
-          {item.title}
-        </a>
-      {/each}
-    </div>
+          People
+        </li>
+        {#each visiblePeopleItems as item (item.url)}
+          <li class="m-0 p-0">
+            <a
+              class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
+              href={item.url}
+              aria-current={isActive(item.url) ? "page" : undefined}
+              onclick={closeAfterNavigate}
+            >
+              <item.icon size={16} aria-hidden="true" />
+              {item.title}
+            </a>
+          </li>
+        {/each}
+      </ul>
+    {/if}
 
-    <div class="hq-nav-group">
-      <div class="hq-nav-group__heading">Administration</div>
-      {#each adminItems as item (item.url)}
-        <a
-          class="hq-nav-link"
-          href={item.url}
-          aria-current={isActive(item.url) ? "page" : undefined}
-          onclick={closeAfterNavigate}
+    {#if toolsItems.length}
+      <ul class="m-0 flex list-none flex-col gap-1 p-0">
+        <li
+          class="px-3 pb-1 pt-0 text-xs font-semibold uppercase tracking-wider text-base-content/60"
         >
-          <span class="hq-nav-link__icon"><item.icon size={17} /></span>
-          {item.title}
-        </a>
-      {/each}
-    </div>
+          Creator tools
+        </li>
+        {#each toolsItems as item (item.url)}
+          <li class="m-0 p-0">
+            <a
+              class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
+              href={item.url}
+              aria-current={isActive(item.url) ? "page" : undefined}
+              onclick={closeAfterNavigate}
+            >
+              <item.icon size={16} aria-hidden="true" />
+              {item.title}
+            </a>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if visibleAdminItems.length}
+      <ul class="m-0 flex list-none flex-col gap-1 p-0">
+        <li
+          class="px-3 pb-1 pt-0 text-xs font-semibold uppercase tracking-wider text-base-content/60"
+        >
+          Administration
+        </li>
+        {#each visibleAdminItems as item (item.url)}
+          <li class="m-0 p-0">
+            <a
+              class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
+              href={item.url}
+              aria-current={isActive(item.url) ? "page" : undefined}
+              onclick={closeAfterNavigate}
+            >
+              <item.icon size={16} aria-hidden="true" />
+              {item.title}
+            </a>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </nav>
 
   <NavUser
@@ -224,69 +274,3 @@
     }}
   />
 </aside>
-
-<style>
-  .hq-brand-link {
-    display: flex;
-    min-width: 0;
-    flex: 1;
-    align-items: center;
-    gap: 10px;
-    color: inherit;
-    text-decoration: none;
-  }
-  .hq-brand-mark {
-    display: grid;
-    width: 35px;
-    height: 35px;
-    flex: none;
-    place-items: center;
-    border: 1px solid #e2e8f1;
-    border-radius: 9px;
-    background: #fff;
-  }
-  .hq-brand-mark img {
-    width: 27px;
-    height: 27px;
-    object-fit: contain;
-  }
-  .hq-brand-copy {
-    display: grid;
-    min-width: 0;
-    gap: 2px;
-  }
-  .hq-brand-copy strong {
-    font-size: 14px;
-    letter-spacing: -0.02em;
-  }
-  .hq-brand-copy small {
-    overflow: hidden;
-    color: #758196;
-    font-size: 10px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .hq-workspace-switch {
-    display: grid;
-    gap: 6px;
-    margin: 2px 0 8px;
-    color: #7a8798;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-  .hq-workspace-switch select {
-    width: 100%;
-    min-height: 39px;
-    border: 1px solid #dbe1e9;
-    border-radius: 8px;
-    background: #fff;
-    padding: 0 28px 0 10px;
-    color: #344256;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: normal;
-    text-transform: none;
-  }
-</style>

@@ -1,0 +1,48 @@
+{
+  "name": "user_task_rate",
+  "label": "Employee Task Rate",
+  "module": "payroll",
+  "table_name": "user_task_rate",
+  "title_field": "id",
+  "in_sidebar": false,
+  "icon": "badge-dollar-sign",
+  "group": "Payroll",
+  "fields": [
+    {
+      "name": "workspace_id",
+      "label": "Workspace",
+      "field_type": "link",
+      "link_entity": "workspace",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "task_type_id",
+      "label": "Task Type",
+      "field_type": "link",
+      "link_entity": "task_type",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "user_id",
+      "label": "Employee",
+      "field_type": "link",
+      "link_entity": "user",
+      "required": true,
+      "in_list_view": true
+    },
+    {
+      "name": "rate",
+      "label": "Override Rate",
+      "field_type": "currency",
+      "required": true,
+      "in_list_view": true
+    }
+  ],
+  "rbac": {
+    "SystemManager": ["read"],
+    "Administrator": ["read"],
+    "HR": ["read"]
+  }
+}

@@ -36,6 +36,7 @@ from app.modules.project_tasks.models import (
     TaskSubmission,
     TaskType,
 )
+from app.modules.workspaces.models import WorkspaceMembership
 
 
 def _id_or_uuid(generated_id: str | None) -> str:
@@ -75,12 +76,17 @@ class ProjectTaskService:
         project = await db.get(Project, data.get("project_id"))
         if not project:
             raise NotFoundError("Project", data.get("project_id"))
+        if not project.workspace_id:
+            raise BadRequestError("Map the project to a workspace before adding tasks")
 
         task_type = await db.get(TaskType, data.get("task_type_id"))
         if not task_type:
             raise NotFoundError("Task Type", data.get("task_type_id"))
-        if project.workspace_id and task_type.workspace_id != project.workspace_id:
+        if task_type.workspace_id != project.workspace_id:
             raise BadRequestError("Task type must belong to the project's workspace")
+        if data.get("workspace_id") not in (None, project.workspace_id):
+            raise BadRequestError("Task workspace is derived from its project")
+        data["workspace_id"] = project.workspace_id
 
         model = get_entity_model("task")
         data = EntityService.coerce_incoming_types(model, data)
@@ -194,6 +200,20 @@ class ProjectTaskService:
         project = await db.get(Project, task.project_id)
         if not project:
             raise NotFoundError("Project", task.project_id)
+        if task.workspace_id != project.workspace_id:
+            raise BadRequestError("Task workspace must match its project")
+        task_type = await db.get(TaskType, task.task_type_id)
+        if not task_type or task_type.workspace_id != project.workspace_id:
+            raise BadRequestError("Task type must belong to the task's workspace")
+        workspace_membership = await db.scalar(
+            select(WorkspaceMembership.id).where(
+                WorkspaceMembership.workspace_id == project.workspace_id,
+                WorkspaceMembership.user_id == user_id,
+                WorkspaceMembership.is_active.is_(True),
+            )
+        )
+        if not workspace_membership:
+            raise BadRequestError("Assignees must be active members of the task workspace")
         membership = await db.scalar(
             select(ProjectMember.id).where(
                 ProjectMember.project_id == project.id,
@@ -245,18 +265,21 @@ class ProjectTaskService:
 
     @staticmethod
     async def list_assignments(
-        db: AsyncSession, task_id: str, page: int = 1, page_size: int = 50
+        db: AsyncSession,
+        task_id: str,
+        page: int = 1,
+        page_size: int = 50,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """Return paginated assignments for a task."""
         task = await db.get(Task, task_id)
         if not task:
             raise NotFoundError("Task", task_id)
 
-        q = (
-            select(TaskAssignment)
-            .where(TaskAssignment.task_id == task_id)
-            .order_by(TaskAssignment.idx)
-        )
+        q = select(TaskAssignment).where(TaskAssignment.task_id == task_id)
+        if user_id:
+            q = q.where(TaskAssignment.user_id == user_id)
+        q = q.order_by(TaskAssignment.idx)
         total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar()
         records = (
             await db.execute(q.offset((page - 1) * page_size).limit(page_size))
@@ -308,12 +331,35 @@ class TaskSubmissionService:
         task = await db.get(Task, assignment.task_id)
         if not task:
             raise NotFoundError("Task", assignment.task_id)
+        project = await db.get(Project, task.project_id)
+        if not project or task.workspace_id != project.workspace_id:
+            raise BadRequestError("Task workspace must match its project")
+        task_type = await db.get(TaskType, task.task_type_id)
+        if not task_type or task_type.workspace_id != project.workspace_id:
+            raise BadRequestError("Task type must belong to the task's workspace")
         if task.status in {"approved", "closed", "cancelled"}:
             raise BadRequestError("Cannot submit work for a completed or cancelled task")
         if task.status not in {"in_progress", "needs_revision"}:
             raise BadRequestError(
                 "Work can only be submitted while the task is in progress or needs revision"
             )
+        if not getattr(user, "is_superuser", False):
+            workspace_membership = await db.scalar(
+                select(WorkspaceMembership.id).where(
+                    WorkspaceMembership.workspace_id == project.workspace_id,
+                    WorkspaceMembership.user_id == user.id,
+                    WorkspaceMembership.is_active.is_(True),
+                )
+            )
+            project_membership = await db.scalar(
+                select(ProjectMember.id).where(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_id == user.id,
+                    ProjectMember.is_active.is_(True),
+                )
+            )
+            if not workspace_membership or not project_membership:
+                raise ForbiddenError("You must be an active workspace project member to submit")
 
         previous_submission_id = data.get("previous_submission_id")
         previous_submission = None
@@ -439,7 +485,11 @@ class TaskApprovalService:
         if decision in {"rejected", "needs_revision"} and not remarks:
             raise BadRequestError("Remarks are required for rejected or needs_revision decisions")
 
-        submission = await db.get(TaskSubmission, submission_id)
+        submission = await db.scalar(
+            select(TaskSubmission)
+            .where(TaskSubmission.id == submission_id)
+            .with_for_update()
+        )
         if not submission:
             raise NotFoundError("Task Submission", submission_id)
         if submission.status in {"approved", "rejected"}:
@@ -484,12 +534,29 @@ class TaskApprovalService:
             task.last_modified_by = user.id
 
         if decision == "approved":
+            project = await db.get(Project, task.project_id)
+            task_type = await db.get(TaskType, task.task_type_id)
+            if not project:
+                raise NotFoundError("Project", task.project_id)
+
+            from app.modules.payroll.services import PayrollService
+
+            applied_rate = await PayrollService.resolve_rate(
+                db, task_type, project.workspace_id, assignment.user_id
+            )
+            applied_rate, applied_quantity, applied_amount = (
+                PayrollService.resolve_snapshot(applied_rate)
+            )
+            submission.approved_rate = applied_rate
+            submission.approved_quantity = applied_quantity
+            submission.approved_amount = applied_amount
+
             await LedgerService.create_ledger_entry(
                 db,
                 reference_entity="task_submission",
                 reference_id=submission.id,
                 user_id=assignment.user_id,
-                amount=await TaskApprovalService._calculate_submission_amount(db, task, submission),
+                amount=applied_amount,
                 entry_type="credit",
                 description=f"Credit for approved submission {submission.id} on task {_task_label(task)}",
                 period=datetime.utcnow().date(),
@@ -533,11 +600,11 @@ class TaskApprovalService:
     @staticmethod
     async def _calculate_submission_amount(
         db: AsyncSession, task: Task, submission: TaskSubmission
-    ) -> float:
-        task_type = await db.get(TaskType, task.task_type_id)
-        rate = float(task_type.unit_rate) if task_type and task_type.unit_rate is not None else 0.0
-        quantity = 1.0
-        return round(rate * quantity, 2)
+    ):
+        """Return the approved snapshot amount; live rates never rewrite approvals."""
+        if submission.approved_amount is None:
+            raise BadRequestError("Approved submission is missing its pay snapshot")
+        return submission.approved_amount
 
     @staticmethod
     def _notification_message(

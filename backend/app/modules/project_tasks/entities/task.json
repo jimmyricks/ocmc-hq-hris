@@ -17,6 +17,15 @@
       "in_list_view": true
     },
     {
+      "name": "workspace_id",
+      "label": "Workspace",
+      "field_type": "link",
+      "link_entity": "workspace",
+      "required": false,
+      "readonly": true,
+      "in_list_view": true
+    },
+    {
       "name": "task_type_id",
       "label": "Task Type",
       "field_type": "link",
@@ -80,16 +89,6 @@
       "name": "due_date",
       "label": "Due Date",
       "field_type": "datetime"
-    },
-    {
-      "name": "planned_start_at",
-      "label": "Planned Start",
-      "field_type": "datetime"
-    },
-    {
-      "name": "planned_end_at",
-      "label": "Planned End",
-      "field_type": "datetime"
     }
   ],
   "rbac": {
@@ -97,19 +96,16 @@
       "*"
     ],
     "Administrator": [
-      "read",
-      "create",
-      "update"
+      "*"
     ],
     "ProjectManager": [
       "read",
       "create",
       "update"
     ],
-    "User": [
+    "Employee": [
       "read",
-      "create",
-      "update"
+      "create"
     ]
   }
 }

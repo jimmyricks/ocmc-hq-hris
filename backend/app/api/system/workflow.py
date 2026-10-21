@@ -16,14 +16,20 @@ from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.security import get_current_user_from_token, CurrentUser
+from app.core.security import (
+    get_current_user_from_token,
+    CurrentUser,
+    is_system_admin_user,
+)
 from app.core.framework.models.workflow import Workflow
 from app.core.framework.models.workflow_state import WorkflowState, generate_slug
 from app.core.framework.models.workflow_action import WorkflowAction
 from app.core.framework.models.workflow_state_link import WorkflowStateLink
 from app.core.framework.models.workflow_transition import WorkflowTransition
 from app.application.services.workflows.workflow_service import WorkflowAppService
-from app.api.dependencies import get_workflow_service
+from app.api.dependencies import get_row_scope_service, get_workflow_service
+from app.application.services.access_control.row_scope_service import RowScopeService
+from app.infrastructure.database.repositories.entity_repository import get_entity_model
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 
@@ -36,6 +42,7 @@ async def get_workflow_transitions(
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
     workflow_service: WorkflowAppService = Depends(get_workflow_service),
+    row_scope_service: RowScopeService = Depends(get_row_scope_service),
 ):
     """
     Get available workflow transitions for an entity.
@@ -44,6 +51,18 @@ async def get_workflow_transitions(
     from app.core.security import get_current_user_from_token
     
     user = await get_current_user_from_token(authorization, db)
+    if record_id:
+        model = get_entity_model(entity)
+        record = await db.get(model, record_id) if model else None
+        if not record or not await row_scope_service.can_access_record(
+            record,
+            entity,
+            user.id,
+            user.role_ids,
+            user.roles,
+            user.is_superuser,
+        ):
+            raise HTTPException(status_code=403, detail="Permission denied")
     
     if not current_state:
         # Get initial state if no current state provided
@@ -77,8 +96,8 @@ def api_response(status: str, message: str, data: Any = None) -> dict:
 
 
 def require_superuser(current_user: CurrentUser):
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Superuser access required")
+    if not is_system_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="System administrator access required")
 
 
 # ============================================================================
@@ -147,6 +166,7 @@ async def list_states(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """List all global workflow states."""
+    require_superuser(current_user)
     result = await db.execute(select(WorkflowState).order_by(WorkflowState.label.asc()))
     states = result.scalars().all()
     return api_response("success", "States retrieved", [
@@ -259,6 +279,7 @@ async def list_actions(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """List all global workflow actions."""
+    require_superuser(current_user)
     result = await db.execute(select(WorkflowAction).order_by(WorkflowAction.label.asc()))
     actions = result.scalars().all()
     return api_response("success", "Actions retrieved", [
@@ -466,6 +487,7 @@ async def get_workflow_by_entity(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Get workflow by target entity name."""
+    require_superuser(current_user)
     result = await db.execute(
         select(Workflow)
         .where(Workflow.target_entity == target_entity)

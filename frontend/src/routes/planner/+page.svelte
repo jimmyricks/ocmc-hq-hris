@@ -1,16 +1,18 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
+  import { onMount } from "svelte";
   import { getToken } from "$lib/auth";
   import TaskDetailModal from "$lib/components/task-manager/task-detail-modal.svelte";
-  import * as Dialog from "$lib/components/native/dialog/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import * as Card from "$lib/components/native/card/index.js";
-  import { Skeleton } from "$lib/components/native/skeleton/index.js";
+  import CalendarCell from "./calendar-cell.svelte";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import * as Tabs from "$lib/components/ui/tabs/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { workspaceApi } from "$lib/workspaces/api";
   import type {
     PlannerActivity,
@@ -22,7 +24,6 @@
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import ArrowRightIcon from "@lucide/svelte/icons/arrow-right";
   import CalendarDaysIcon from "@lucide/svelte/icons/calendar-days";
-  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import PlusIcon from "@lucide/svelte/icons/plus";
 
   type CalendarCell = {
@@ -34,6 +35,7 @@
 
   let projects = $state<Project[]>([]);
   let activities = $state<PlannerActivity[]>([]);
+  let scheduleSummaries = $state<PlannerActivity[]>([]);
   let loading = $state(true);
   let errorMessage = $state("");
   let month = $state(
@@ -41,6 +43,8 @@
   );
   let selectedDate = $state(dateKey(new Date()));
   let selectedProject = $state("all");
+  let selectedTeam = $state("all");
+  let selectedWorkspace = $state("all");
   let view = $state<"month" | "agenda">("month");
   let detailOpen = $state(false);
   let detailTaskId = $state<string | null>(null);
@@ -59,6 +63,7 @@
   let recurrence = $state("none");
   let recurrenceUntil = $state("");
   let recurrenceInterval = $state("1");
+  let loadGeneration = 0;
   let resources = $state<
     Array<{
       id: string;
@@ -68,7 +73,25 @@
     }>
   >([]);
   let teams = $state<Array<{ id: string; name: string }>>([]);
-  const canManage = $derived(Boolean(workspaceContext?.can_manage));
+  const canManage = $derived(
+    Boolean(
+      workspaceContext?.capabilities?.can_manage_active_workspace ??
+        workspaceContext?.can_manage,
+    ),
+  );
+  const canViewGlobalSchedule = $derived(
+    Boolean(
+      workspaceContext?.capabilities?.can_view_global_schedule &&
+        !workspaceContext?.capabilities?.is_system_admin,
+    ),
+  );
+  const canFilterWorkspace = $derived(
+    Boolean(
+      canViewGlobalSchedule ||
+        (workspaceContext?.capabilities?.is_system_admin &&
+          workspaceContext?.is_global),
+    ),
+  );
   const composerWorkspaceId = $derived(
     projects.find((project) => project.id === activityProjectId)
       ?.workspace_id ??
@@ -86,6 +109,39 @@
       (workspace) => workspace.id === composerWorkspaceId,
     ),
   );
+  const workspaceOptions = $derived.by(() => {
+    const workspaces = (workspaceContext?.workspaces ?? []).filter(
+      (workspace) =>
+        workspaceContext?.capabilities?.is_system_admin
+          ? workspaceContext.is_global
+          : workspace.id === workspaceContext?.active_workspace_id,
+    );
+    for (const activity of scheduleSummaries) {
+      if (
+        !workspaces.some((workspace) => workspace.id === activity.workspace.id)
+      ) {
+        workspaces.push({
+          ...activity.workspace,
+          slug: activity.workspace.id,
+          timezone: "UTC",
+          is_active: true,
+        });
+      }
+    }
+    return workspaces.sort((a, b) => a.name.localeCompare(b.name));
+  });
+  const teamOptions = $derived.by(() => {
+    const teams: Array<{ id: string; name: string }> = [];
+    for (const activity of activities) {
+      if (
+        activity.team &&
+        !teams.some((team) => team.id === activity.team?.id)
+      ) {
+        teams.push(activity.team);
+      }
+    }
+    return teams.sort((a, b) => a.name.localeCompare(b.name));
+  });
 
   const weekdayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const monthHeading = $derived(
@@ -94,10 +150,16 @@
     ),
   );
   const filteredActivities = $derived(
-    activities.filter(
-      (activity) =>
-        selectedProject === "all" || activity.project?.id === selectedProject,
-    ),
+    [...activities, ...scheduleSummaries].filter((activity) => {
+      const matchesProject =
+        selectedProject === "all" || activity.project?.id === selectedProject;
+      const matchesTeam =
+        selectedTeam === "all" || activity.team?.id === selectedTeam;
+      const matchesWorkspace =
+        selectedWorkspace === "all" ||
+        activity.workspace.id === selectedWorkspace;
+      return matchesProject && matchesTeam && matchesWorkspace;
+    }),
   );
   const monthCells = $derived.by(() => {
     const first = new Date(month.getFullYear(), month.getMonth(), 1);
@@ -295,6 +357,11 @@
   }
 
   function activitySubtitle(activity: PlannerActivity) {
+    if (activity.summary_only) {
+      return [activity.workspace.name, activity.status, activity.resource_label]
+        .filter(Boolean)
+        .join(" · ");
+    }
     return (
       [
         activity.project?.name,
@@ -315,8 +382,7 @@
     }).format(new Date(`${iso.slice(0, 10)}T00:00:00`));
   }
 
-  $effect(() => {
-    if (!browser) return;
+  onMount(() => {
     if (!getToken()) {
       goto("/login");
       return;
@@ -336,6 +402,7 @@
   });
 
   async function load() {
+    const generation = ++loadGeneration;
     loading = true;
     errorMessage = "";
     try {
@@ -350,17 +417,60 @@
         workspaceApi.getPlannerActivities(
           rangeStart.toISOString(),
           rangeEnd.toISOString(),
+          {
+            projectId: selectedProject === "all" ? undefined : selectedProject,
+            teamId: selectedTeam === "all" ? undefined : selectedTeam,
+            workspaceId:
+              selectedWorkspace === "all" ? undefined : selectedWorkspace,
+          },
         ),
         workspaceApi.getContext(),
       ]);
+      if (generation !== loadGeneration) return;
       projects = projectData;
       activities = activityData;
       workspaceContext = contextData;
+      if (
+        contextData.capabilities?.can_view_global_schedule &&
+        !contextData.capabilities.is_system_admin
+      ) {
+        const summaries = await workspaceApi.getScheduleSummaries(
+          rangeStart.toISOString(),
+          rangeEnd.toISOString(),
+        );
+        if (generation !== loadGeneration) return;
+        scheduleSummaries = summaries.map((summary, index) => ({
+          id: `summary:${summary.workspace.id}:${summary.kind}:${summary.starts_at}:${index}`,
+          source_type: "schedule_summary",
+          source_id: "",
+          kind: summary.kind,
+          title: `${
+            summary.kind === "project_deadline"
+              ? "Project deadline"
+              : summary.kind === "project_start"
+                ? "Project start"
+                : `${summary.kind[0]?.toUpperCase() ?? ""}${summary.kind.slice(1)}`
+          } · ${summary.workspace.name}`,
+          starts_at: summary.starts_at,
+          ends_at: summary.ends_at,
+          all_day: summary.all_day,
+          status: summary.status,
+          workspace: summary.workspace,
+          project: null,
+          team: null,
+          resources: [],
+          summary_only: true,
+          resource_label: summary.resource_label,
+        }));
+      } else {
+        scheduleSummaries = [];
+      }
     } catch (error) {
+      if (generation !== loadGeneration) return;
       console.error("Failed to load planner:", error);
       errorMessage = "The planner couldn't load. Refresh to try again.";
     } finally {
-      loading = false;
+      if (generation === loadGeneration) loading = false;
     }
   }
 </script>
@@ -374,15 +484,23 @@
 </svelte:head>
 
 <div class="planner flex flex-col gap-6">
-  <section class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+  <section
+    class="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"
+  >
     <div class="space-y-2">
       <p class="eyebrow">Workspace calendar</p>
       <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
         Team planner
       </h1>
-      <p class="max-w-xl text-sm text-muted-foreground sm:text-base">
+      <p class="max-w-xl text-sm text-base-content/60 sm:text-base">
         Authorized tasks, plans, lessons, and studio bookings in one calendar.
       </p>
+      {#if canViewGlobalSchedule}
+        <p class="max-w-xl text-xs text-base-content/60">
+          Other workspaces appear as coordination summaries only; their records
+          cannot be opened from this calendar.
+        </p>
+      {/if}
     </div>
     <div class="flex flex-wrap gap-2 self-start sm:self-auto">
       {#if canManage}
@@ -391,96 +509,160 @@
           Add activity
         </Button>
       {/if}
-      <a
-        href="/project/all"
-        class="inline-flex h-10 items-center justify-center gap-2 self-start rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:self-auto"
-      >
-        <PlusIcon class="size-4" />
-        Add task
-      </a>
+      {#if canManage}
+        <Button href="/project/all" variant="primary">
+          <PlusIcon class="size-4" />
+          Add task
+        </Button>
+      {/if}
     </div>
   </section>
 
   {#if errorMessage}
     <div
-      class="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+      class="rounded-xl border border-error/20 bg-error/5 px-4 py-3 text-sm text-error"
     >
       {errorMessage}
     </div>
   {/if}
 
   <div class="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_310px]">
-    <Card.Root class="overflow-hidden border-border/80 shadow-sm">
+    <Card.Root class="overflow-hidden">
       <div
-        class="flex flex-col gap-4 border-b border-border/70 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"
+        class="flex flex-col gap-4 border-b border-base-300/70 p-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between"
       >
-        <div class="flex items-center gap-3">
-          <div class="flex items-center gap-1 rounded-xl bg-secondary p-1">
-            <button
-              class="flex size-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-card hover:text-foreground"
-              aria-label="Previous month"
-              onclick={() => changeMonth(-1)}
-            >
-              <ArrowLeftIcon class="size-4" />
-            </button>
-            <button
-              class="flex size-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-card hover:text-foreground"
-              aria-label="Next month"
-              onclick={() => changeMonth(1)}
-            >
-              <ArrowRightIcon class="size-4" />
-            </button>
+        <!-- Month navigation -->
+        <div class="flex min-w-0 items-center justify-between gap-4">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="join shrink-0">
+              <Button
+                variant="outline"
+                icon
+                aria-label="Previous month"
+                onclick={() => changeMonth(-1)}
+              >
+                <ArrowLeftIcon class="size-4" />
+              </Button>
+              <Button variant="outline" class="shrink-0" onclick={goToToday}>
+                Today
+              </Button>
+              <Button
+                variant="outline"
+                icon
+                aria-label="Next month"
+                onclick={() => changeMonth(1)}
+              >
+                <ArrowRightIcon class="size-4" />
+              </Button>
+            </div>
+
+            <div class="min-w-0">
+              <h2 class="truncate text-xl font-semibold tracking-tight">
+                {monthHeading}
+              </h2>
+            </div>
           </div>
-          <div>
-            <h2 class="text-lg font-semibold tracking-tight">{monthHeading}</h2>
-            <p class="text-[11px] text-muted-foreground">
-              {loading
-                ? "Loading activity…"
-                : `${monthActivities.length} scheduled ${monthActivities.length === 1 ? "activity" : "activities"}`}
-            </p>
-          </div>
-          <button
-            class="ml-1 rounded-md border border-border/80 bg-card px-3 py-1.5 text-xs font-semibold transition hover:border-primary/40 hover:text-primary"
-            onclick={goToToday}
-          >
-            Today
-          </button>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <label class="relative">
-            <span class="sr-only">Filter by project</span>
-            <select
-              bind:value={selectedProject}
-              class="h-9 max-w-[200px] appearance-none rounded-md border border-border/80 bg-card py-0 pl-3 pr-8 text-xs font-medium outline-none transition focus:border-primary"
+        <!-- Calendar controls -->
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Select.Root
+            type="single"
+            value={selectedProject}
+            onValueChange={(value) => {
+              selectedProject = value ?? "all";
+              load();
+            }}
+          >
+            <Select.Trigger
+              size="md"
+              class="w-full min-w-0 sm:w-44"
+              aria-label="Filter by project"
             >
-              <option value="all">All projects</option>
+              {selectedProject === "all"
+                ? "All projects"
+                : (projects.find((project) => project.id === selectedProject)
+                    ?.name ?? "All projects")}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="all" label="All projects">
+                All projects
+              </Select.Item>
               {#each projects as project (project.id)}
-                <option value={project.id}>{project.name}</option>
+                <Select.Item value={project.id} label={project.name}>
+                  {project.name}
+                </Select.Item>
               {/each}
-            </select>
-            <ChevronDownIcon
-              class="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-            />
-          </label>
-          <div class="flex rounded-md bg-secondary p-1">
-            <button
-              class="rounded-sm px-3 py-1.5 text-xs font-semibold transition"
-              class:active-view={view === "month"}
-              aria-pressed={view === "month"}
-              onclick={() => (view = "month")}
+            </Select.Content>
+          </Select.Root>
+
+          {#if canFilterWorkspace}
+            <Select.Root
+              type="single"
+              value={selectedWorkspace}
+              onValueChange={(value) => {
+                selectedWorkspace = value ?? "all";
+                load();
+              }}
             >
-              Month
-            </button>
-            <button
-              class="rounded-sm px-3 py-1.5 text-xs font-semibold transition"
-              class:active-view={view === "agenda"}
-              aria-pressed={view === "agenda"}
-              onclick={() => (view = "agenda")}
+              <Select.Trigger
+                size="md"
+                class="w-full min-w-0 sm:w-48"
+                aria-label="Filter by workspace"
+              >
+                {selectedWorkspace === "all"
+                  ? "All workspaces"
+                  : (workspaceOptions.find(
+                      (workspace) => workspace.id === selectedWorkspace,
+                    )?.name ?? "All workspaces")}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="all" label="All workspaces">
+                  All workspaces
+                </Select.Item>
+                {#each workspaceOptions as workspace (workspace.id)}
+                  <Select.Item value={workspace.id} label={workspace.name}>
+                    {workspace.name}
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          {/if}
+
+          <Select.Root
+            type="single"
+            value={selectedTeam}
+            onValueChange={(value) => {
+              selectedTeam = value ?? "all";
+              load();
+            }}
+          >
+            <Select.Trigger
+              size="md"
+              class="w-full min-w-0 sm:w-44"
+              aria-label="Filter by team"
             >
-              Agenda
-            </button>
-          </div>
+              {selectedTeam === "all"
+                ? "All teams"
+                : (teamOptions.find((team) => team.id === selectedTeam)?.name ??
+                  "All teams")}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="all" label="All teams">All teams</Select.Item>
+              {#each teamOptions as team (team.id)}
+                <Select.Item value={team.id} label={team.name}>
+                  {team.name}
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+
+          <Tabs.Root bind:value={view} class="w-full sm:w-auto">
+            <Tabs.List class="tabs-sm grid w-full grid-cols-2 sm:flex">
+              <Tabs.Trigger value="month" class="text-xs">Month</Tabs.Trigger>
+              <Tabs.Trigger value="agenda" class="text-xs">Agenda</Tabs.Trigger>
+            </Tabs.List>
+          </Tabs.Root>
         </div>
       </div>
 
@@ -494,52 +676,24 @@
           {#if loading}
             <div class="calendar-grid loading-grid">
               {#each Array.from({ length: 42 }) as _, index (index)}
-                <div class="calendar-cell"><Skeleton class="h-4 w-5" /></div>
+                <div class="skeleton-cell"><Skeleton class="h-4 w-5" /></div>
               {/each}
             </div>
           {:else}
             <div class="calendar-grid">
               {#each monthCells as cell (cell.key)}
-                <button
-                  class="calendar-cell group text-left transition"
-                  class:outside={!cell.inMonth}
-                  class:selected={selectedDate === cell.key}
-                  class:today={cell.key === dateKey(new Date())}
-                  aria-label="{cell.date.toLocaleDateString('en-US', {
-                    month: 'long',
-                    day: 'numeric',
-                  })}, {cell.activities.length} activities"
-                  aria-pressed={selectedDate === cell.key}
+                <CalendarCell
+                  {cell}
+                  selected={selectedDate === cell.key}
+                  today={cell.key === dateKey(new Date())}
                   onclick={() => (selectedDate = cell.key)}
-                >
-                  <span class="day-number">{cell.date.getDate()}</span>
-                  {#if cell.activities.length > 0}
-                    <span class="task-indicators">
-                      {#each cell.activities.slice(0, 3) as activity (activity.id)}
-                        <span
-                          class="task-pill"
-                          style="--task-color: {activity.workspace.color}"
-                        >
-                          <span class="task-pill-dot"></span>
-                          <span class="hidden truncate sm:inline"
-                            >{activity.title}</span
-                          >
-                        </span>
-                      {/each}
-                    </span>
-                  {/if}
-                  {#if cell.activities.length > 3}
-                    <span class="more-count"
-                      >+{cell.activities.length - 3} more</span
-                    >
-                  {/if}
-                </button>
+                />
               {/each}
             </div>
           {/if}
         </div>
       {:else}
-        <div class="agenda-list divide-y divide-border/70">
+        <div class="agenda-list divide-y divide-base-300/70">
           {#if loading}
             <div class="space-y-4 p-6">
               {#each Array.from({ length: 5 }) as _, i (i)}
@@ -548,18 +702,16 @@
             </div>
           {:else if monthActivities.length === 0}
             <div class="px-6 py-16 text-center">
-              <CalendarDaysIcon
-                class="mx-auto size-8 text-muted-foreground/50"
-              />
+              <CalendarDaysIcon class="mx-auto size-8 text-base-content/40" />
               <p class="mt-3 font-semibold">A clear month ahead</p>
-              <p class="mt-1 text-sm text-muted-foreground">
+              <p class="mt-1 text-sm text-base-content/60">
                 Scheduled tasks, plans, and sessions will appear here.
               </p>
             </div>
           {:else}
             {#each monthActivities as activity (activity.id)}
               <button
-                class="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-muted/50"
+                class="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-base-200/50"
                 onclick={() => openActivity(activity)}
               >
                 <span
@@ -582,8 +734,7 @@
                   <span class="block truncate text-sm font-semibold"
                     >{activity.title}</span
                   >
-                  <span
-                    class="mt-1 block truncate text-xs text-muted-foreground"
+                  <span class="mt-1 block truncate text-xs text-base-content/60"
                     >{activitySubtitle(activity)}</span
                   >
                 </span>
@@ -598,7 +749,7 @@
     </Card.Root>
 
     <div class="flex flex-col gap-5">
-      <Card.Root class="border-border/80 shadow-sm">
+      <Card.Root>
         <Card.Header class="px-5 pb-3 pt-5">
           <div class="flex items-center justify-between">
             <div>
@@ -625,7 +776,7 @@
             </div>
           {:else if selectedActivities.length === 0}
             <p
-              class="rounded-xl bg-muted/60 px-4 py-5 text-center text-xs leading-relaxed text-muted-foreground"
+              class="rounded-xl bg-base-200/60 px-4 py-5 text-center text-xs leading-relaxed text-base-content/60"
             >
               No activity is scheduled for this day. Pick a date with a marker
               to see what's planned.
@@ -634,14 +785,14 @@
             <div class="flex flex-col gap-2">
               {#each selectedActivities as activity (activity.id)}
                 <button
-                  class="rounded-xl border border-border/70 p-3 text-left transition hover:border-primary/40 hover:bg-muted/40"
+                  class="rounded-xl border border-base-300/70 p-3 text-left transition hover:border-primary/40 hover:bg-base-200/40"
                   onclick={() => openActivity(activity)}
                 >
                   <span class="block text-sm font-semibold"
                     >{activity.title}</span
                   >
                   <span class="mt-1.5 flex items-center justify-between gap-2">
-                    <span class="truncate text-[11px] text-muted-foreground"
+                    <span class="truncate text-[11px] text-base-content/60"
                       >{activitySubtitle(activity)}</span
                     >
                     <span
@@ -656,7 +807,7 @@
         </Card.Content>
       </Card.Root>
 
-      <Card.Root class="border-border/80 shadow-sm">
+      <Card.Root>
         <Card.Header class="px-5 pb-3 pt-5">
           <div class="flex items-center justify-between">
             <div>
@@ -664,7 +815,7 @@
               <Card.Description class="mt-1">Next two weeks</Card.Description>
             </div>
             <span
-              class="rounded-md bg-secondary px-2.5 py-1 text-[10px] font-bold text-secondary-foreground"
+              class="rounded-md bg-base-200 px-2.5 py-1 text-[10px] font-bold text-base-content"
               >{nextUp.length}</span
             >
           </div>
@@ -677,7 +828,7 @@
               {/each}
             </div>
           {:else if nextUp.length === 0}
-            <p class="text-xs leading-relaxed text-muted-foreground">
+            <p class="text-xs leading-relaxed text-base-content/60">
               No scheduled activity in the next two weeks.
             </p>
           {:else}
@@ -696,12 +847,12 @@
                       >{activity.title}</span
                     >
                     <span
-                      class="mt-1 block truncate text-[10px] text-muted-foreground"
+                      class="mt-1 block truncate text-[10px] text-base-content/60"
                       >{activitySubtitle(activity)}</span
                     >
                   </span>
                   <span
-                    class="shrink-0 text-[10px] font-medium text-muted-foreground"
+                    class="shrink-0 text-[10px] font-medium text-base-content/60"
                     >{dueDateLabel(activity.starts_at)}</span
                   >
                 </button>
@@ -815,7 +966,7 @@
         </Field.Field>
       {:else if selectedComposerWorkspace}
         <p
-          class="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground"
+          class="rounded-lg bg-base-200/50 px-3 py-2 text-xs text-base-content/60"
         >
           Company: {selectedComposerWorkspace.name}
         </p>
@@ -981,7 +1132,7 @@
   }
 
   .eyebrow {
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.14em;
@@ -999,137 +1150,42 @@
   }
 
   .weekday-row {
-    border-bottom: 1px solid var(--border);
-    background: var(--muted);
+    border-bottom: 1px solid var(--color-base-300);
+    background: var(--color-base-200);
   }
 
   .weekday-label {
     padding: 0.7rem 0.75rem;
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 0.63rem;
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
 
-  .calendar-cell {
-    position: relative;
-    min-width: 0;
+  .skeleton-cell {
+    display: flex;
     min-height: 7.2rem;
-    padding: 0.6rem 0.55rem 0.5rem;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: var(--card);
-  }
-
-  .calendar-cell:nth-child(7n) {
-    border-right: 0;
-  }
-
-  .calendar-cell:hover {
-    background: var(--muted);
-  }
-
-  .calendar-cell.outside {
-    background: var(--background);
-  }
-
-  .calendar-cell.outside .day-number {
-    color: var(--muted-foreground);
-  }
-
-  .calendar-cell.selected {
-    z-index: 1;
-    box-shadow: inset 0 0 0 2px var(--ring);
-  }
-
-  .day-number {
-    display: inline-flex;
-    width: 1.7rem;
-    height: 1.7rem;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    color: var(--foreground);
-    font-size: 0.75rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .calendar-cell.today .day-number {
-    background: var(--primary);
-    color: var(--primary-foreground);
-  }
-
-  .calendar-cell.selected .day-number {
-    color: var(--foreground);
-    font-weight: 800;
-  }
-
-  .calendar-cell.today.selected .day-number {
-    background: var(--primary);
-    color: var(--primary-foreground);
-  }
-
-  .task-indicators {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    margin-top: 0.28rem;
-  }
-
-  .task-pill {
-    display: flex;
-    min-width: 0;
-    height: 1.2rem;
-    align-items: center;
-    gap: 0.3rem;
-    overflow: hidden;
-    border-radius: var(--radius-sm);
-    padding: 0 0.25rem;
-    background: color-mix(in oklab, var(--task-color) 38%, var(--card));
-    color: var(--foreground);
-    font-size: 0.6rem;
-    line-height: 1;
-  }
-
-  .task-pill:hover {
-    background: color-mix(in oklab, var(--task-color) 55%, var(--card));
-  }
-
-  .task-pill-dot {
-    width: 0.32rem;
-    height: 0.32rem;
-    flex: 0 0 0.32rem;
-    border-radius: 50%;
-    background: var(--task-color);
-  }
-
-  .more-count {
-    display: block;
-    margin-top: 0.25rem;
-    color: var(--muted-foreground);
-    font-size: 0.58rem;
-  }
-
-  .loading-grid .calendar-cell {
-    display: flex;
     align-items: flex-start;
     justify-content: flex-end;
     padding: 0.8rem;
+    border-right: 1px solid var(--color-base-300);
+    border-bottom: 1px solid var(--color-base-300);
+    background: var(--color-base-100);
+  }
+
+  .skeleton-cell:nth-child(7n) {
+    border-right: 0;
   }
 
   .agenda-date {
     min-width: 3.2rem;
-    background: color-mix(in oklab, var(--task-color) 10%, var(--card));
-    color: var(--foreground);
-  }
-
-  .active-view {
-    background: var(--card);
-    color: var(--foreground);
-    box-shadow: 0 1px 3px
-      color-mix(in oklab, var(--foreground) 12%, transparent);
+    background: color-mix(
+      in oklab,
+      var(--task-color) 10%,
+      var(--color-base-100)
+    );
+    color: var(--color-base-content);
   }
 
   @keyframes arrive {
@@ -1153,38 +1209,9 @@
       text-align: center;
     }
 
-    .calendar-cell {
+    .skeleton-cell {
       min-height: 4.65rem;
       padding: 0.28rem;
-      text-align: center;
-    }
-
-    .day-number {
-      width: 1.55rem;
-      height: 1.55rem;
-    }
-
-    .task-indicators {
-      min-height: 0.35rem;
-      flex-direction: row;
-      justify-content: center;
-      gap: 2px;
-      margin-top: 0.25rem;
-    }
-
-    .task-pill {
-      width: 0.32rem;
-      height: 0.32rem;
-      padding: 0;
-      background: var(--task-color);
-    }
-
-    .task-pill-dot {
-      display: none;
-    }
-
-    .more-count {
-      display: none;
     }
   }
 

@@ -16,7 +16,9 @@ from app.api.dependencies import get_document_service
 from app.application.services.documents.document_service import DocumentAppService
 from app.application.services.documents.print import render_entity_html, render_with_assembler, html_to_pdf
 from app.application.services.access_control.rbac_service import RBACAppService
-from app.api.dependencies import get_rbac_service
+from app.application.services.access_control.row_scope_service import RowScopeService
+from app.api.dependencies import get_rbac_service, get_row_scope_service
+from app.infrastructure.database.repositories.entity_repository import get_entity_model
 
 router = APIRouter(tags=["print"])
 
@@ -28,6 +30,7 @@ async def print_preview(
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
     rbac: RBACAppService = Depends(get_rbac_service),
+    row_scope: RowScopeService = Depends(get_row_scope_service),
     document_service: DocumentAppService = Depends(get_document_service),
 ):
     """Return printable HTML for an entity record."""
@@ -42,6 +45,18 @@ async def print_preview(
         action="read",
         role_ids=user.role_ids,
         is_superuser=user.is_superuser
+    ):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    model = get_entity_model(entity)
+    record = await db.get(model, record_id) if model else None
+    if not record or not await row_scope.can_access_record(
+        record,
+        entity,
+        user.id,
+        user.role_ids,
+        user.roles,
+        user.is_superuser,
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
 
@@ -60,6 +75,7 @@ async def print_pdf(
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
     rbac: RBACAppService = Depends(get_rbac_service),
+    row_scope: RowScopeService = Depends(get_row_scope_service),
     document_service: DocumentAppService = Depends(get_document_service),
 ):
     """Generate and return a PDF for an entity record."""
@@ -74,6 +90,18 @@ async def print_pdf(
         action="read",
         role_ids=user.role_ids,
         is_superuser=user.is_superuser
+    ):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    model = get_entity_model(entity)
+    record = await db.get(model, record_id) if model else None
+    if not record or not await row_scope.can_access_record(
+        record,
+        entity,
+        user.id,
+        user.role_ids,
+        user.roles,
+        user.is_superuser,
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
 

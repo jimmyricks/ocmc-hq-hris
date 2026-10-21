@@ -1,5 +1,10 @@
 import { apiJSON } from "$lib/api";
-import type { PlannerActivity, WorkspaceContext } from "./types";
+import type {
+  PlannerActivity,
+  PlannerScheduleSummary,
+  DirectoryUser,
+  WorkspaceContext,
+} from "./types";
 export { getActiveWorkspaceId, setActiveWorkspaceId } from "./context";
 
 export const workspaceApi = {
@@ -143,10 +148,12 @@ export const workspaceApi = {
   async getPlannerActivities(
     start: string,
     end: string,
-    projectId?: string,
+    filters: { projectId?: string; teamId?: string; workspaceId?: string } = {},
   ): Promise<PlannerActivity[]> {
     const params = new URLSearchParams({ start, end });
-    if (projectId) params.set("project_id", projectId);
+    if (filters.projectId) params.set("project_id", filters.projectId);
+    if (filters.teamId) params.set("team_id", filters.teamId);
+    if (filters.workspaceId) params.set("workspace_id", filters.workspaceId);
     const pageSize = 500;
     const activities: PlannerActivity[] = [];
     let page = 1;
@@ -160,5 +167,42 @@ export const workspaceApi = {
       page += 1;
     } while (activities.length < total);
     return activities;
+  },
+
+  async getScheduleSummaries(
+    start: string,
+    end: string,
+    workspaceId?: string,
+  ): Promise<PlannerScheduleSummary[]> {
+    const params = new URLSearchParams({ start, end });
+    if (workspaceId) params.set("workspace_id", workspaceId);
+    const pageSize = 500;
+    const summaries: PlannerScheduleSummary[] = [];
+    let page = 1;
+    let total = 0;
+    do {
+      params.set("page", String(page));
+      params.set("page_size", String(pageSize));
+      const res = await apiJSON(`/api/planner/activities/summary?${params}`);
+      summaries.push(...((res.data ?? []) as PlannerScheduleSummary[]));
+      total = res.total ?? summaries.length;
+      page += 1;
+    } while (summaries.length < total);
+    return summaries;
+  },
+
+  async getHRDirectory(page = 1, pageSize = 50, search = "") {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+    });
+    if (search.trim()) params.set("search", search.trim());
+    const res = await apiJSON(`/api/workspaces/hr-directory?${params}`);
+    return {
+      users: (res.data ?? []) as DirectoryUser[],
+      total: Number(res.total ?? 0),
+      page: Number(res.page ?? page),
+      page_size: Number(res.page_size ?? pageSize),
+    };
   },
 };

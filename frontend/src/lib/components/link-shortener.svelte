@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { toast } from "$lib/notifications";
-  import * as Tabs from "$lib/components/native/tabs/index.js";
-  import * as Table from "$lib/components/native/table/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as Card from "$lib/components/native/card/index.js";
-  import { Input } from "$lib/components/native/input";
-  import { Button } from "$lib/components/native/button";
-  import { Checkbox } from "$lib/components/native/checkbox";
-  import { Badge } from "$lib/components/native/badge";
+  import * as Tabs from "$lib/components/ui/tabs/index.js";
+  import * as Table from "$lib/components/ui/table/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import { Input } from "$lib/components/ui/input";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Button } from "$lib/components/ui/button";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Badge } from "$lib/components/ui/badge";
   import { apiJSON } from "$lib/api/index.js";
 
   let destination = $state("");
@@ -162,16 +163,29 @@
       </Card.Header>
       <Card.Content>
         <div class="flex gap-2 mb-4">
-          <select
+          <Select.Root
+            type="single"
             bind:value={status}
-            onchange={load}
-            class="h-9 rounded-md border px-2 text-sm"
+            onValueChange={() => load()}
           >
-            <option value="all">All</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-            <option value="expired">Expired</option>
-          </select>
+            <Select.Trigger size="md" class="w-auto">
+              {status === "all"
+                ? "All"
+                : status === "active"
+                  ? "Active"
+                  : status === "inactive"
+                    ? "Inactive"
+                    : "Expired"}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="all" label="All">All</Select.Item>
+              <Select.Item value="active" label="Active">Active</Select.Item>
+              <Select.Item value="inactive" label="Inactive">
+                Inactive
+              </Select.Item>
+              <Select.Item value="expired" label="Expired">Expired</Select.Item>
+            </Select.Content>
+          </Select.Root>
           <Input
             placeholder="Search slug or title"
             bind:value={search}
@@ -180,9 +194,9 @@
         </div>
 
         {#if loading}
-          <p class="text-muted-foreground">Loading...</p>
+          <p class="text-base-content/60">Loading...</p>
         {:else if links.length === 0}
-          <p class="text-muted-foreground">No short links yet.</p>
+          <p class="text-base-content/60">No short links yet.</p>
         {:else}
           <Table.Root>
             <Table.Header>
@@ -244,7 +258,7 @@
       </Card.Header>
       <Card.Content>
         <p>Total clicks: {selected.data.analytics.total_clicks}</p>
-        <p class="text-muted-foreground text-sm mt-1">
+        <p class="text-base-content/60 text-sm mt-1">
           {selected.data.record.destination_url}
         </p>
       </Card.Content>

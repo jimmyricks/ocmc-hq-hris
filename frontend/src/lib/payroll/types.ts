@@ -52,3 +52,30 @@ export interface PayrollSettings {
 	created_at?: string;
 	updated_at?: string;
 }
+
+export interface UserTaskRate {
+	id: string;
+	workspace_id: string;
+	task_type_id: string;
+	user_id: string;
+	rate: number;
+	created_at?: string;
+	updated_at?: string;
+}
+
+export interface EmployeeRateOptions {
+	workspaces: Array<{ id: string; name: string }>;
+	users: Array<{
+		id: string;
+		full_name: string;
+		email: string;
+		workspace_ids: string[];
+	}>;
+	task_types: Array<{
+		id: string;
+		workspace_id: string;
+		name: string;
+		unit_rate: number | null;
+		unit: string | null;
+	}>;
+}

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import * as Table from "$lib/components/native/table/index.js";
-  import * as Dialog from "$lib/components/native/dialog/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import { Spinner } from "$lib/components/native/spinner/index.js";
-  import * as Empty from "$lib/components/native/empty/index.js";
+  import * as Table from "$lib/components/ui/table/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import { Spinner } from "$lib/components/ui/spinner/index.js";
+  import * as Empty from "$lib/components/ui/empty/index.js";
   import { apiJSON } from "$lib/api/index.js";
   import { toast } from "$lib/notifications";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
@@ -63,7 +63,7 @@
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Workflows</h1>
-      <p class="text-sm text-muted-foreground">
+      <p class="text-sm text-base-content/60">
         Manage entity-specific workflows
       </p>
     </div>
@@ -90,7 +90,7 @@
             {#each workflows as workflow (workflow.id)}
               <Table.Row>
                 <Table.Cell class="font-medium">{workflow.name}</Table.Cell>
-                <Table.Cell class="text-muted-foreground"
+                <Table.Cell class="text-base-content/60"
                   >{workflow.target_entity}</Table.Cell
                 >
                 <Table.Cell>

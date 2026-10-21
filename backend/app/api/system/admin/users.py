@@ -11,7 +11,12 @@ from sqlalchemy.orm import selectinload
 from pydantic import ValidationError
 
 from app.core.database import get_db
-from app.core.security import get_current_user_from_token, CurrentUser, get_password_hash
+from app.core.security import (
+    get_current_user_from_token,
+    CurrentUser,
+    get_password_hash,
+    is_system_admin_user,
+)
 from app.core.framework.models.auth import User, Role
 from app.schemas.user import UserCreate, UserUpdate
 from .common import api_response
@@ -22,7 +27,7 @@ router = APIRouter(tags=["admin-users"])
 @router.get("/meta/user")
 async def get_user_metadata(current_user: CurrentUser = Depends(get_current_user_from_token)):
     """Get metadata for User entity."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Superuser access required")
     
     return api_response(
@@ -150,7 +155,7 @@ async def list_users(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """List all users with their roles and pagination."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     query = select(User).options(selectinload(User.roles))
@@ -206,7 +211,7 @@ async def create_user(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Create a new user."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     try:
@@ -289,7 +294,7 @@ async def update_user(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Update a user."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(select(User).options(selectinload(User.roles)).where(User.id == user_id))
@@ -378,7 +383,7 @@ async def delete_user(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Delete a user."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(select(User).where(User.id == user_id))
@@ -410,7 +415,7 @@ async def assign_role_to_user(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Assign a role to a user."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(
@@ -444,7 +449,7 @@ async def remove_role_from_user(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Remove a role from a user."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.roles)))
@@ -474,7 +479,7 @@ async def add_role_to_user(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Assign a role to a user."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.roles)))

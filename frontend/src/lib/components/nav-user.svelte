@@ -1,6 +1,7 @@
 <script lang="ts">
   import { clearAuth } from "$lib/auth";
   import { goto } from "$app/navigation";
+  import { Button } from "$lib/components/ui/button/index.js";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
 
   let {
@@ -29,87 +30,35 @@
   }
 </script>
 
-<div class="hq-profile">
+<div
+  class="flex min-h-14 items-center gap-2.5 border-t border-base-300 px-1 pt-3"
+>
   {#if user.avatar}
-    <img class="hq-profile__avatar" src={user.avatar} alt="" />
+    <img
+      class="size-8 shrink-0 rounded-lg border border-base-300 object-cover"
+      src={user.avatar}
+      alt=""
+    />
   {:else}
-    <span class="hq-profile__avatar hq-profile__initials">
+    <span
+      class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-xs font-semibold text-primary"
+    >
       {initials(user.name)}
     </span>
   {/if}
-  <span class="hq-profile__copy">
-    <strong>{user.name}</strong>
-    <small>{user.email}</small>
+  <span class="grid min-w-0 flex-1 gap-0.5">
+    <strong class="truncate text-xs font-medium text-base-content"
+      >{user.name}</strong
+    >
+    <small class="truncate text-xs text-base-content/60">{user.email}</small>
   </span>
-  <button
-    class="hq-profile__logout"
-    type="button"
+  <Button
+    variant="ghost"
+    size="sm" icon
     aria-label="Log out"
     title="Log out"
     onclick={logout}
   >
-    <LogOutIcon size={16} />
-  </button>
+    <LogOutIcon size={16} aria-hidden="true" />
+  </Button>
 </div>
-
-<style>
-  .hq-profile {
-    display: flex;
-    min-height: 55px;
-    align-items: center;
-    gap: 10px;
-    border-top: 1px solid #e6eaf0;
-    padding: 11px 3px 1px;
-  }
-  .hq-profile__avatar {
-    display: grid;
-    width: 33px;
-    height: 33px;
-    flex: none;
-    place-items: center;
-    border: 1px solid #dce4f1;
-    border-radius: 9px;
-    background: #edf2ff;
-    color: #2457d6;
-    font-size: 11px;
-    font-weight: 750;
-  }
-  .hq-profile__copy {
-    display: grid;
-    min-width: 0;
-    flex: 1;
-    gap: 2px;
-  }
-  .hq-profile__copy strong,
-  .hq-profile__copy small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .hq-profile__copy strong {
-    color: #344256;
-    font-size: 12px;
-    font-weight: 650;
-  }
-  .hq-profile__copy small {
-    color: #8792a2;
-    font-size: 10px;
-  }
-  .hq-profile__logout {
-    display: grid;
-    width: 30px;
-    height: 30px;
-    flex: none;
-    place-items: center;
-    border: 1px solid transparent;
-    border-radius: 7px;
-    background: transparent;
-    color: #7a8798;
-    cursor: pointer;
-  }
-  .hq-profile__logout:hover {
-    border-color: #e3e8ef;
-    background: #f5f7fa;
-    color: #ad2635;
-  }
-</style>

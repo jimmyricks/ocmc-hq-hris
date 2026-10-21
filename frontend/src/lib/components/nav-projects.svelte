@@ -5,6 +5,8 @@
   import { refCache } from "$lib/task-manager/ref-cache.js";
   import type { Project, User } from "$lib/task-manager/types.js";
   import ProjectFormModal from "./project-form-modal.svelte";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { workspaceApi } from "$lib/workspaces/api";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import LayersIcon from "@lucide/svelte/icons/layers";
@@ -45,7 +47,10 @@
 
   $effect(() => {
     if (!createOpen || users.length > 0) return;
-    refCache.getUsers().then((rows) => (users = rows)).catch(() => {});
+    refCache
+      .getUsers()
+      .then((rows) => (users = rows))
+      .catch(() => {});
   });
 
   function handleCreate() {
@@ -62,97 +67,57 @@
   }
 </script>
 
-<section class="hq-nav-group">
-  <div class="hq-nav-group__heading">
+<section class="flex flex-col gap-1">
+  <div
+    class="flex min-h-7 items-center px-3 text-xs font-semibold uppercase tracking-wider text-base-content/60"
+  >
     <span>Projects</span>
     {#if canManageProjects}
-      <button
-        class="hq-nav-add"
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm" icon
+        class="ml-auto size-7 min-h-7"
         aria-label="Add project"
         onclick={handleCreate}
       >
-        <PlusIcon size={15} />
-      </button>
+        <PlusIcon size={16} aria-hidden="true" />
+      </Button>
     {/if}
   </div>
   <a
-    class="hq-nav-link"
+    class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
     href="/project/all"
     aria-current={page.url.pathname === "/project/all" ? "page" : undefined}
     onclick={() => onClose?.()}
   >
-    <span class="hq-nav-link__icon"><LayersIcon size={17} /></span>
+    <LayersIcon size={16} aria-hidden="true" />
     All tasks
   </a>
   {#if loading}
-    <div class="hq-project-placeholder"><span></span><span></span></div>
+    <div class="grid gap-2 px-3 py-2" aria-label="Loading projects">
+      <Skeleton class="h-2.5 w-4/5" />
+      <Skeleton class="h-2.5 w-3/5" />
+    </div>
   {:else if projects.length === 0}
-    <p class="hq-project-empty">No projects yet</p>
+    <p class="m-0 px-3 py-1 text-xs text-base-content/60">No projects yet</p>
   {:else}
     {#each projects as project (project.id)}
       <a
-        class="hq-nav-link"
+        class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
         href="/project/{project.id}"
-        aria-current={page.url.pathname === `/project/${project.id}` ? "page" : undefined}
+        aria-current={page.url.pathname === `/project/${project.id}`
+          ? "page"
+          : undefined}
         onclick={() => onClose?.()}
       >
         <span
-          class="hq-project-dot"
-          style:background-color={project.color || "#8291a5"}
+          class="size-2 shrink-0 rounded-sm"
+          style:background-color={project.color || "var(--color-base-content)"}
         ></span>
-        <span class="hq-project-name">{project.name}</span>
+        <span class="truncate">{project.name}</span>
       </a>
     {/each}
   {/if}
 </section>
 
 <ProjectFormModal bind:open={createOpen} {users} onSaved={onProjectSaved} />
-
-<style>
-  .hq-nav-add {
-    display: grid;
-    width: 23px;
-    height: 23px;
-    place-items: center;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    background: transparent;
-    color: #7a8798;
-    cursor: pointer;
-  }
-  .hq-nav-add:hover {
-    border-color: #dbe1e9;
-    background: #fff;
-    color: #2457d6;
-  }
-  .hq-project-dot {
-    width: 9px;
-    height: 9px;
-    flex: none;
-    border-radius: 3px;
-  }
-  .hq-project-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .hq-project-empty {
-    margin: 2px 10px;
-    color: #8792a2;
-    font-size: 12px;
-  }
-  .hq-project-placeholder {
-    display: grid;
-    gap: 7px;
-    padding: 7px 11px;
-  }
-  .hq-project-placeholder span {
-    height: 9px;
-    border-radius: 5px;
-    background: #eef2f7;
-  }
-  .hq-project-placeholder span:last-child {
-    width: 72%;
-  }
-</style>

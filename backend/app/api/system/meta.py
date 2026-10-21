@@ -8,6 +8,10 @@ from app.core.security import get_current_user_from_token, CurrentUser
 from app.core.framework.models.auth import EntityPermission
 from app.core.framework.models.ordering import ModuleOrder, EntityOrder
 from app.core.constants.permissions import ROW_SCOPE_ALL, PERMISSION_FLAGS, merge_scope
+from app.core.security import is_system_admin_user
+from app.application.services.access_control.rbac_service import (
+    is_system_admin_entity,
+)
 
 router = APIRouter(prefix="/meta", tags=["meta"])
 
@@ -91,7 +95,7 @@ async def get_meta_list(
         }
     
     # If user is SystemManager, return all entities
-    if user.is_superuser:
+    if is_system_admin_user(user):
         entity_list = [
             {
                 "name": e.name,
@@ -116,6 +120,7 @@ async def get_meta_list(
                 "_entity_order": entity_orders.get(e.name, 999),
             }
             for e in entities
+            if e.name != "user_task_rate"
         ]
         # Sort by module order, then entity order
         entity_list.sort(key=lambda x: (x["_module_order"], x["_entity_order"]))
@@ -141,6 +146,8 @@ async def get_meta_list(
 
     filtered_entities = []
     for e in entities:
+        if is_system_admin_entity(e.name) or e.name == "user_task_rate":
+            continue
         perms = perms_by_entity.get(
             e.name,
             {

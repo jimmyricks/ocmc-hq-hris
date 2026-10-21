@@ -77,8 +77,8 @@ async def init_db():
 async def verify_workspace_schema() -> None:
     """Fail before create_all/seeders obscure an unapplied workspace migration."""
     required_columns = {
-        "project": {"workspace_id", "team_id"},
-        "task": {"planned_start_at", "planned_end_at"},
+        "project": {"workspace_id", "team_id", "is_continuous"},
+        "task": {"workspace_id"},
         "task_type": {"workspace_id"},
         "payroll_line_item": {"workspace_id"},
     }
@@ -122,6 +122,6 @@ async def verify_workspace_schema() -> None:
                 "baseline before applying or stamping migrations."
             )
         raise RuntimeError(
-            f"Database schema is behind the workspace/planner migration: {details}. "
+            f"Database schema is behind the workspace/project schedule migrations: {details}. "
             f"{remediation}"
         )

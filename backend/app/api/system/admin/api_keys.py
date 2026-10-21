@@ -21,7 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.framework.models.auth import APIKey
-from app.core.security import CurrentUser, require_authenticated_user
+from app.core.security import (
+    CurrentUser,
+    is_system_admin_user,
+    require_authenticated_user,
+)
 
 router = APIRouter(prefix="/admin/api-keys", tags=["admin"])
 
@@ -39,7 +43,7 @@ def _generate_key() -> tuple[str, str, str]:
 
 
 def _require_admin(current_user: CurrentUser) -> None:
-    if not current_user.is_superuser and "Administrator" not in current_user.roles:
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
@@ -72,7 +76,7 @@ async def list_api_keys(
     db: AsyncSession = Depends(get_db),
 ):
     """List API keys.  Admins see all keys; regular users see only their own."""
-    is_admin = current_user.is_superuser or "Administrator" in current_user.roles
+    is_admin = is_system_admin_user(current_user)
     target_user = user_id if (is_admin and user_id) else current_user.id
 
     q = select(APIKey).where(APIKey.user_id == target_user, APIKey.is_active == True)  # noqa: E712

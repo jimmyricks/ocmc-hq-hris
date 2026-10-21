@@ -2,29 +2,29 @@ import type { Priority, TaskStatus, WorkflowState } from './types.js';
 
 export const STATUS_META: Record<
 	TaskStatus,
-	{ label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'ghost'; color: string }
+	{ label: string; variant: 'default' | 'primary' | 'secondary' | 'destructive' | 'outline' | 'ghost' | 'info' | 'success' | 'warning'; color: string }
 > = {
-	pending: { label: 'Pending', variant: 'outline', color: '#6b7280' },
-	in_progress: { label: 'In Progress', variant: 'secondary', color: '#3b82f6' },
-	for_review: { label: 'For Review', variant: 'default', color: '#f59e0b' },
-	submitted: { label: 'Submitted', variant: 'default', color: '#f59e0b' },
-	needs_revision: { label: 'Needs Revision', variant: 'destructive', color: '#ef4444' },
-	approved: { label: 'Approved', variant: 'default', color: '#22c55e' },
-	closed: { label: 'Closed', variant: 'outline', color: '#22c55e' },
-	cancelled: { label: 'Cancelled', variant: 'outline', color: '#6b7280' },
+	pending: { label: 'Pending', variant: 'outline', color: 'var(--color-base-content)' },
+	in_progress: { label: 'In Progress', variant: 'primary', color: 'var(--color-primary)' },
+	for_review: { label: 'For Review', variant: 'warning', color: 'var(--color-warning)' },
+	submitted: { label: 'Submitted', variant: 'warning', color: 'var(--color-warning)' },
+	needs_revision: { label: 'Needs Revision', variant: 'destructive', color: 'var(--color-error)' },
+	approved: { label: 'Approved', variant: 'success', color: 'var(--color-success)' },
+	closed: { label: 'Closed', variant: 'success', color: 'var(--color-success)' },
+	cancelled: { label: 'Cancelled', variant: 'outline', color: 'var(--color-base-content)' },
 };
 
 // workflow_state IS the task status. See user-journey.md Journey 7.
 export const WORKFLOW_STATE_META: Record<
 	WorkflowState,
-	{ label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; color: string }
+	{ label: string; variant: 'default' | 'primary' | 'secondary' | 'destructive' | 'outline' | 'info' | 'success' | 'warning'; color: string }
 > = {
-	draft_assigned: { label: 'Draft', variant: 'outline', color: '#6b7280' },
-	in_progress: { label: 'In Progress', variant: 'secondary', color: '#3b82f6' },
-	for_review: { label: 'For Review', variant: 'default', color: '#f59e0b' },
-	needs_revision: { label: 'Needs Revision', variant: 'destructive', color: '#ef4444' },
-	approved: { label: 'Approved', variant: 'default', color: '#22c55e' },
-	closed: { label: 'Closed', variant: 'outline', color: '#22c55e' },
+	draft_assigned: { label: 'Draft', variant: 'outline', color: 'var(--color-base-content)' },
+	in_progress: { label: 'In Progress', variant: 'primary', color: 'var(--color-primary)' },
+	for_review: { label: 'For Review', variant: 'warning', color: 'var(--color-warning)' },
+	needs_revision: { label: 'Needs Revision', variant: 'destructive', color: 'var(--color-error)' },
+	approved: { label: 'Approved', variant: 'success', color: 'var(--color-success)' },
+	closed: { label: 'Closed', variant: 'success', color: 'var(--color-success)' },
 };
 
 // Map a task record to its effective workflow state, falling back to legacy `status`.
@@ -43,7 +43,7 @@ export function stateLabel(task: { workflow_state?: WorkflowState; status: TaskS
 
 export function stateBadge(task: { workflow_state?: WorkflowState; status: TaskStatus }): {
 	label: string;
-	variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'ghost';
+	variant: 'default' | 'primary' | 'secondary' | 'destructive' | 'outline' | 'ghost' | 'info' | 'success' | 'warning';
 	color: string;
 } {
 	const state = taskState(task);
@@ -51,14 +51,14 @@ export function stateBadge(task: { workflow_state?: WorkflowState; status: TaskS
 		return WORKFLOW_STATE_META[state as WorkflowState];
 	}
 	const meta = STATUS_META[state as TaskStatus];
-	return meta ?? { label: String(state), variant: 'outline' as const, color: '#6b7280' };
+	return meta ?? { label: String(state), variant: 'outline' as const, color: 'var(--color-base-content)' };
 }
 
 export const PRIORITY_META: Record<Priority, { label: string; color: string }> = {
-	urgent: { label: 'Urgent', color: '#ef4444' },
-	high: { label: 'High', color: '#f97316' },
-	medium: { label: 'Medium', color: '#eab308' },
-	low: { label: 'Low', color: '#3b82f6' },
+	urgent: { label: 'Urgent', color: 'var(--color-error)' },
+	high: { label: 'High', color: 'var(--color-warning)' },
+	medium: { label: 'Medium', color: 'var(--color-info)' },
+	low: { label: 'Low', color: 'var(--color-primary)' },
 };
 
 export function prioritySort(a: Priority, b: Priority): number {

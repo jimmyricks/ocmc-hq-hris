@@ -8,6 +8,10 @@
     {
       "name": "@apply",
       "description": "Tailwind CSS v4 utility composition directive."
+    },
+    {
+      "name": "@plugin",
+      "description": "Tailwind CSS v4 plugin loading directive."
     }
   ]
 }

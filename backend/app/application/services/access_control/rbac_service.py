@@ -63,6 +63,39 @@ from app.domain.protocols.permission_repository import PermissionRepositoryProto
 VALID_ACTIONS = frozenset(
     flag.replace("can_", "") for flag in PERMISSION_FLAGS if flag.startswith("can_")
 )
+SYSTEM_ADMIN_ENTITIES = frozenset(
+    {
+        "user",
+        "role",
+        "entity_permission",
+        "audit_log",
+        "oc_audit_log",
+        "ledger",
+        "model",
+        "model_definition",
+        "entity_definition",
+        "api_key",
+        "error_log",
+        "user_session",
+        "workflow",
+        "workflow_state",
+        "workflow_action",
+        "workflow_state_link",
+        "workflow_transition",
+        "module_order",
+        "entity_order",
+        "payroll_line_item",
+        "payroll_period",
+        "payroll_entry",
+        "invoice",
+        "payroll_settings",
+        "user_task_rate",
+    }
+)
+
+
+def is_system_admin_entity(entity: str) -> bool:
+    return entity in SYSTEM_ADMIN_ENTITIES
 
 
 class InvalidPermissionAction(ValueError):
@@ -131,6 +164,11 @@ class RBACAppService:
                 f"Invalid permission action '{action}'. Valid actions: {sorted(VALID_ACTIONS)}"
             )
 
+        if is_system_admin_entity(entity) and not await self._has_system_admin_role(
+            role_ids
+        ):
+            return False
+
         perms = await self.get_effective_permissions(role_ids, entity)
         entity_perms = perms.get(entity)
         if not entity_perms:
@@ -147,11 +185,18 @@ class RBACAppService:
         if not role_ids:
             return {}
 
+        is_system_admin = await self._has_system_admin_role(role_ids)
+        if not is_system_admin:
+            if entity_name and is_system_admin_entity(entity_name):
+                return {}
+
         permissions = await self.auth_repo.get_permissions_for_user_roles(role_ids)
 
         result: dict[str, EffectivePermission] = {}
         for perm in permissions:
             name = perm.entity_name
+            if is_system_admin_entity(name) and not is_system_admin:
+                continue
             if entity_name and name != entity_name:
                 continue
 
@@ -163,6 +208,13 @@ class RBACAppService:
             current.row_scope = merge_scope(current.row_scope, perm.row_scope)
 
         return result
+
+    async def _has_system_admin_role(self, role_ids: list[str]) -> bool:
+        role_lookup = getattr(self.auth_repo, "get_role_names", None)
+        if role_lookup is None:
+            return False
+        role_names = await role_lookup(role_ids)
+        return bool({"SystemManager", "Administrator"}.intersection(role_names))
 
     async def get_row_scope(self, role_ids: list[str], entity_name: str) -> list[str]:
         """Return the combined row scope filters for an entity across all roles.

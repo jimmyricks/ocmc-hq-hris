@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import * as Card from "$lib/components/native/card/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
   import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import { workspaceApi } from "$lib/workspaces/api.js";
@@ -51,7 +51,7 @@
     task_types: [],
   });
   let workspaceId = $state("");
-  let workspaceColor = $state("#3b82f6");
+  let workspaceColor = $state("#45aeee");
   let userId = $state("");
   let membershipRole = $state<MembershipRole>("member");
   let isHome = $state(true);
@@ -97,7 +97,7 @@
       workspaceColor =
         workspaceData.workspaces.find(
           (workspace) => workspace.id === workspaceId,
-        )?.color ?? "#3b82f6";
+        )?.color ?? "#45aeee";
       if (workspaceId) await Promise.all([loadMembers(), loadResources()]);
     } catch (error) {
       console.error("Failed to load workspace administration:", error);
@@ -122,7 +122,7 @@
     workspaceId = value;
     workspaceColor =
       context?.workspaces.find((workspace) => workspace.id === value)?.color ??
-      "#3b82f6";
+      "#45aeee";
     Promise.all([loadMembers(), loadResources()]).catch((error) => {
       console.error("Failed to load workspace members:", error);
     });
@@ -237,19 +237,19 @@
 <div class="flex flex-col gap-6">
   <header>
     <p
-      class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+      class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60"
     >
       HQ administration
     </p>
     <h1 class="mt-2 text-3xl font-semibold tracking-tight">Workspaces</h1>
-    <p class="mt-2 text-sm text-muted-foreground">
+    <p class="mt-2 text-sm text-base-content/60">
       Configure company access, calendar colors, and legacy project/rate
       ownership.
     </p>
   </header>
 
   {#if loading}
-    <p class="text-sm text-muted-foreground">
+    <p class="text-sm text-base-content/60">
       Loading workspace administration…
     </p>
   {:else}
@@ -293,7 +293,7 @@
                 id="workspace-color"
                 type="color"
                 bind:value={workspaceColor}
-                class="h-10 p-1"
+                class="p-1"
               />
             </Field.Field>
             <Button onclick={saveColor}>Save color</Button>
@@ -303,7 +303,7 @@
         <section class="flex flex-col gap-4 rounded-xl border p-4">
           <div>
             <h2 class="font-semibold">Rooms and schedulable resources</h2>
-            <p class="mt-1 text-xs text-muted-foreground">
+            <p class="mt-1 text-xs text-base-content/60">
               These resources can be reserved by calendar events and recurring
               sessions.
             </p>
@@ -350,7 +350,7 @@
           <div class="flex flex-wrap gap-2">
             {#each resources as resource (resource.id)}
               <div
-                class="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2"
+                class="flex items-center gap-2 rounded-lg bg-base-200/50 px-3 py-2"
               >
                 <span class="text-sm font-medium">{resource.name}</span>
                 <Badge variant="secondary">{resource.resource_type}</Badge>
@@ -363,7 +363,7 @@
                 </Button>
               </div>
             {:else}
-              <p class="text-xs text-muted-foreground">
+              <p class="text-xs text-base-content/60">
                 No resources configured for this workspace.
               </p>
             {/each}
@@ -374,7 +374,7 @@
           <section class="flex flex-col gap-4 rounded-xl border p-4">
             <div>
               <h2 class="font-semibold">Assign company access</h2>
-              <p class="mt-1 text-xs text-muted-foreground">
+              <p class="mt-1 text-xs text-base-content/60">
                 Members have one home company. Supervisors can have several
                 assigned companies.
               </p>
@@ -479,7 +479,7 @@
             <div class="flex flex-col gap-2 border-t pt-4">
               {#each members as member (member.id)}
                 <div
-                  class="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2"
+                  class="flex items-center justify-between gap-3 rounded-lg bg-base-200/40 px-3 py-2"
                 >
                   <div class="min-w-0">
                     <p class="truncate text-sm font-medium">
@@ -502,7 +502,7 @@
                   </Button>
                 </div>
               {:else}
-                <p class="text-xs text-muted-foreground">
+                <p class="text-xs text-base-content/60">
                   No members assigned to this workspace yet.
                 </p>
               {/each}
@@ -512,7 +512,7 @@
           <section class="flex flex-col gap-4 rounded-xl border p-4">
             <div>
               <h2 class="font-semibold">Map existing records</h2>
-              <p class="mt-1 text-xs text-muted-foreground">
+              <p class="mt-1 text-xs text-base-content/60">
                 Unmapped legacy records remain hidden from regular workspace
                 users until assigned.
               </p>

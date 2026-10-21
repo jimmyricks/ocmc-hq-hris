@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db, get_rbac_service, get_row_scope_service
@@ -28,7 +29,14 @@ from app.modules.project_tasks.services import (
     TaskApprovalService,
     TaskSubmissionService,
 )
-from app.modules.project_tasks.models import Project, Task, TaskAssignment, TaskSubmission
+from app.modules.project_tasks.models import (
+    Project,
+    Task,
+    TaskAssignment,
+    TaskSubmission,
+    TaskType,
+)
+from app.modules.workspaces.models import WorkspaceMembership
 from app.modules.workspaces.services import WorkspaceService
 from app.schemas.base import ActionResponse
 
@@ -44,8 +52,6 @@ class CreateTaskRequest(BaseModel):
     description: str | None = None
     priority: str = "medium"
     due_date: datetime | None = None
-    planned_start_at: datetime | None = None
-    planned_end_at: datetime | None = None
     status: str = "pending"
 
 
@@ -139,6 +145,9 @@ async def create_task(
     )
 
     data = payload.model_dump(exclude_unset=True)
+    if data.get("workspace_id") not in (None, project.workspace_id):
+        raise ForbiddenError("Task workspace is derived from its project")
+    data["workspace_id"] = project.workspace_id
     record = await ProjectTaskService.create_task(db, current_user, data)
     return ActionResponse(
         status="success",
@@ -161,7 +170,13 @@ async def assign_task(
     if not task:
         raise ForbiddenError("Task is unavailable in this workspace")
     project = await db.get(Project, task.project_id)
-    if not project:
+    task_type = await db.get(TaskType, task.task_type_id)
+    if (
+        not project
+        or task.workspace_id != project.workspace_id
+        or not task_type
+        or task_type.workspace_id != project.workspace_id
+    ):
         raise ForbiddenError("Project is unavailable in this workspace")
     await _check_workspace_supervisor(
         current_user,
@@ -181,6 +196,15 @@ async def assign_task(
         project.workspace_id,
         workspace_id,
     )
+
+    if not await db.scalar(
+        select(WorkspaceMembership.id).where(
+            WorkspaceMembership.workspace_id == project.workspace_id,
+            WorkspaceMembership.user_id == payload.user_id,
+            WorkspaceMembership.is_active.is_(True),
+        )
+    ):
+        raise ForbiddenError("Assignees must be active members of the task workspace")
 
     record = await ProjectTaskService.assign_task(db, current_user, task_id, payload.user_id)
     background_tasks.add_task(
@@ -206,6 +230,9 @@ async def list_task_assignments(
     task = await db.get(Task, task_id)
     if not task:
         raise ForbiddenError("You don't have permission to view this task")
+    project = await db.get(Project, task.project_id)
+    if not project:
+        raise ForbiddenError("You don't have permission to view this task")
     has_permission = await rbac.check_permission(
         user_id=current_user.id,
         entity="task",
@@ -230,7 +257,27 @@ async def list_task_assignments(
         current_user.is_superuser,
     ):
         raise ForbiddenError("You don't have permission to view this task")
-    result = await ProjectTaskService.list_assignments(db, task_id, page=page, page_size=page_size)
+    membership_role = await db.scalar(
+        select(WorkspaceMembership.membership_role).where(
+            WorkspaceMembership.workspace_id == project.workspace_id,
+            WorkspaceMembership.user_id == current_user.id,
+            WorkspaceMembership.is_active.is_(True),
+        )
+    )
+    result = await ProjectTaskService.list_assignments(
+        db,
+        task_id,
+        page=page,
+        page_size=page_size,
+        user_id=(
+            None
+            if WorkspaceService.is_system_admin(
+                current_user.roles, current_user.is_superuser
+            )
+            or membership_role == "supervisor"
+            else current_user.id
+        ),
+    )
     return ActionResponse(
         status="success",
         message="Assignments retrieved",
@@ -244,10 +291,42 @@ async def create_submission(
     current_user: CurrentUser = Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
     rbac: RBACAppService = Depends(get_rbac_service),
+    row_scope_service: RowScopeService = Depends(get_row_scope_service),
 ):
     await _check_permission(current_user, rbac, "task_submission", "create")
 
     data = payload.model_dump(exclude_unset=True)
+    assignment = await db.get(TaskAssignment, payload.task_assignment_id)
+    task = await db.get(Task, assignment.task_id) if assignment else None
+    project = await db.get(Project, task.project_id) if task else None
+    task_type = await db.get(TaskType, task.task_type_id) if task else None
+    if (
+        not project
+        or not task
+        or task.workspace_id != project.workspace_id
+        or not task_type
+        or task_type.workspace_id != project.workspace_id
+    ):
+        raise ForbiddenError("Task assignment is unavailable in this workspace")
+    if not await row_scope_service.can_access_record(
+        task,
+        "task",
+        current_user.id,
+        current_user.role_ids,
+        current_user.roles,
+        current_user.is_superuser,
+    ):
+        raise ForbiddenError("You can only submit work for an assigned task")
+    if not await db.scalar(
+        select(WorkspaceMembership.id).where(
+            WorkspaceMembership.workspace_id == project.workspace_id,
+            WorkspaceMembership.user_id == current_user.id,
+            WorkspaceMembership.is_active.is_(True),
+        )
+    ) and not WorkspaceService.is_system_admin(
+        current_user.roles, current_user.is_superuser
+    ):
+        raise ForbiddenError("You are not a member of the task workspace")
     record = await TaskSubmissionService.create_submission(db, current_user, data)
     return ActionResponse(
         status="success",
@@ -273,7 +352,14 @@ async def approve_submission(
     )
     task = await db.get(Task, assignment.task_id) if assignment else None
     project = await db.get(Project, task.project_id) if task else None
-    if not project:
+    task_type = await db.get(TaskType, task.task_type_id) if task else None
+    if (
+        not project
+        or not task
+        or task.workspace_id != project.workspace_id
+        or not task_type
+        or task_type.workspace_id != project.workspace_id
+    ):
         raise ForbiddenError("Submission is unavailable in this workspace")
     await _check_workspace_supervisor(
         current_user,

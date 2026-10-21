@@ -1,6 +1,6 @@
 ---
 date_created: 2026-07-14
-date_modified: 2026-07-23
+date_modified: 2026-10-20
 title: Documentation Index
 description: Table of contents for the OC HQ project and HRIS documentation
 ---
@@ -16,6 +16,7 @@ Use this index to find the right document for your question.
 | Core modules, concepts, and high-level architecture           | [`architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md) |
 | Database entities, relationships, and constraints             | [`erd/ERD.md`](erd/ERD.md)                                     |
 | Payroll, task rates, verification workflows, and HR processes | [`hris/HRIS.md`](hris/HRIS.md)                                 |
+| Design language, UI tokens, and component rules               | [`design/DESIGN.md`](design/DESIGN.md)                         |
 | Quick employee-to-payroll user journey                        | [`../epics/user-journey.md`](../epics/user-journey.md)         |
 | Utils feature design (link shortener, QR generator)           | [`features/UTILS.md`](features/UTILS.md)                       |
 | Workspace assistant setup and tool boundaries                 | [`features/ASSISTANT.md`](features/ASSISTANT.md)               |
@@ -30,6 +31,8 @@ docs/
 ├── DEVIN.md              <- AI documentation style guide
 ├── architecture/
 │   └── ARCHITECTURE.md   <- system design and modules
+├── design/
+│   └── DESIGN.md         <- design language and UI rules
 ├── erd/
 │   └── ERD.md            <- data model and entity relationships
 ├── features/

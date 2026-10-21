@@ -1,10 +1,11 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { Button } from "$lib/components/native/button/index.js";
-  import * as Tabs from "$lib/components/native/tabs/index.js";
-  import * as Table from "$lib/components/native/table/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import * as Tabs from "$lib/components/ui/tabs/index.js";
+  import * as Table from "$lib/components/ui/table/index.js";
+  import * as Stats from "$lib/components/ui/stat/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
   import { getToken } from "$lib/auth";
   import { auditApi } from "$lib/audit/api.js";
   import type { AuditLog, Ledger } from "$lib/audit/types.js";
@@ -95,7 +96,7 @@
   </div>
 
   {#if error}
-    <p class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+    <p class="rounded-md bg-error/10 p-3 text-sm text-error">
       {error}
     </p>
   {/if}
@@ -152,11 +153,11 @@
         </Field.Field>
       </div>
 
-      <p class="text-sm text-muted-foreground">Total: {auditResult.total}</p>
+      <p class="text-sm text-base-content/60">Total: {auditResult.total}</p>
 
       <div class="border rounded-xl overflow-hidden">
         <Table.Root>
-          <Table.Header class="bg-muted/100">
+          <Table.Header class="bg-base-200/100">
             <Table.Row>
               <Table.Head class="w-[180px]">Timestamp</Table.Head>
               <Table.Head>Action</Table.Head>
@@ -204,7 +205,7 @@
               <Table.Row>
                 <Table.Cell
                   colspan={7}
-                  class="text-center text-muted-foreground py-6"
+                  class="text-center text-base-content/60 py-6"
                 >
                   No audit logs found
                 </Table.Cell>
@@ -261,32 +262,36 @@
         </Field.Field>
       </div>
 
-      <div class="grid grid-cols-4 gap-4 text-sm">
-        <div>
-          <span class="text-muted-foreground">Count</span>
-          <p class="font-medium">{ledgerSummary().count}</p>
-        </div>
-        <div>
-          <span class="text-muted-foreground">Credits</span>
-          <p class="font-medium text-emerald-600 dark:text-emerald-400">
+      <Stats.Root
+        class="w-full stats-vertical border border-base-300 bg-base-100 lg:stats-horizontal"
+      >
+        <Stats.Item>
+          <Stats.Title>Count</Stats.Title>
+          <Stats.Value class="tabular-nums">{ledgerSummary().count}</Stats.Value>
+        </Stats.Item>
+        <Stats.Item>
+          <Stats.Title>Credits</Stats.Title>
+          <Stats.Value class="tabular-nums text-success">
             {ledgerSummary().credits}
-          </p>
-        </div>
-        <div>
-          <span class="text-muted-foreground">Debits</span>
-          <p class="font-medium text-destructive">{ledgerSummary().debits}</p>
-        </div>
-        <div>
-          <span class="text-muted-foreground">Balance</span>
-          <p class="font-medium">{ledgerSummary().balance}</p>
-        </div>
-      </div>
+          </Stats.Value>
+        </Stats.Item>
+        <Stats.Item>
+          <Stats.Title>Debits</Stats.Title>
+          <Stats.Value class="tabular-nums text-error">
+            {ledgerSummary().debits}
+          </Stats.Value>
+        </Stats.Item>
+        <Stats.Item>
+          <Stats.Title>Balance</Stats.Title>
+          <Stats.Value class="tabular-nums">{ledgerSummary().balance}</Stats.Value>
+        </Stats.Item>
+      </Stats.Root>
 
-      <p class="text-sm text-muted-foreground">Total: {ledgerResult.total}</p>
+      <p class="text-sm text-base-content/60">Total: {ledgerResult.total}</p>
 
       <div class="border rounded-xl overflow-hidden">
         <Table.Root>
-          <Table.Header class="bg-muted/100">
+          <Table.Header class="bg-base-200/100">
             <Table.Row>
               <Table.Head class="w-[120px]">Period</Table.Head>
               <Table.Head>Reference</Table.Head>
@@ -318,7 +323,7 @@
               <Table.Row>
                 <Table.Cell
                   colspan={6}
-                  class="text-center text-muted-foreground py-6"
+                  class="text-center text-base-content/60 py-6"
                 >
                   No ledger entries found
                 </Table.Cell>

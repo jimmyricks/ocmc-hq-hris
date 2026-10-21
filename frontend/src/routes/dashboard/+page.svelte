@@ -7,9 +7,11 @@
   import { payrollApi } from "$lib/payroll/api.js";
   import type { PayrollEntry } from "$lib/payroll/types.js";
   import TaskDetailModal from "$lib/components/task-manager/task-detail-modal.svelte";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import * as Card from "$lib/components/native/card/index.js";
-  import { Skeleton } from "$lib/components/native/skeleton/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import * as Stats from "$lib/components/ui/stat/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { taskApi } from "$lib/task-manager/api.js";
   import type {
     Project,
@@ -96,34 +98,41 @@
     currentUser?.full_name?.split(" ")[0] || currentUser?.username || "there",
   );
 
+  const statTones: Record<string, string> = {
+    success: "bg-success/15 text-success",
+    primary: "bg-primary/15 text-primary",
+    warning: "bg-warning/15 text-warning",
+    secondary: "bg-secondary/15 text-secondary",
+  };
+
   const stats = $derived([
     {
       label: "Active projects",
       value: activeProjects.length,
       note: "Across the workspace",
       icon: FolderKanbanIcon,
-      tone: "moss",
+      tone: "success",
     },
     {
       label: "My open tasks",
       value: myTasks.length,
       note: "Assigned to you",
       icon: CheckSquare2Icon,
-      tone: "blue",
+      tone: "primary",
     },
     {
       label: isPM ? "Ready for review" : "In review",
       value: reviewTasks.length,
       note: isPM ? "Waiting on your decision" : "With the project leads",
       icon: ClipboardCheckIcon,
-      tone: "amber",
+      tone: "warning",
     },
     {
       label: "Paid this period",
       value: formatCurrency(paidTotal),
       note: "Latest payroll run",
       icon: BanknoteIcon,
-      tone: "coral",
+      tone: "secondary",
     },
   ]);
 
@@ -212,70 +221,67 @@
 </svelte:head>
 
 <div class="dashboard flex flex-col gap-6 sm:gap-8">
-  <section class="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+  <section
+    class="flex flex-col justify-between gap-5 sm:flex-row sm:items-center"
+  >
     <div class="space-y-2">
       <p class="eyebrow">{dateLabel}</p>
       <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
         Good day, {firstName}<span class="greeting-mark">.</span>
       </h1>
-      <p class="max-w-xl text-sm text-muted-foreground sm:text-base">
+      <p class="max-w-xl text-sm text-base-content/60 sm:text-base">
         Here's what's moving across your team today.
       </p>
     </div>
-    <a
+    <Button
       href="/project/all"
-      class="inline-flex h-10 items-center justify-center gap-2 self-start rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:self-auto"
+      variant="primary"
+      class="self-start sm:self-auto"
     >
       <PlusIcon class="size-4" />
       Create a task
-    </a>
+    </Button>
   </section>
 
   {#if loadError}
     <div
-      class="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+      class="rounded-xl border border-error/20 bg-error/5 px-4 py-3 text-sm text-error"
     >
       {loadError}
     </div>
   {/if}
 
-  <section
-    class="stats-grid grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
+  <Stats.Root
+    class="w-full stats-vertical border border-base-300 bg-base-100 lg:stats-horizontal"
   >
     {#each stats as stat (stat.label)}
-      <Card.Root class="stat-card overflow-hidden border-border/80 shadow-sm">
-        <Card.Content class="flex items-start justify-between gap-3 p-5">
-          <div class="space-y-3">
-            <p
-              class="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground"
-            >
-              {stat.label}
-            </p>
-            <div class="text-3xl font-semibold tracking-tight tabular-nums">
-              {loading ? "—" : stat.value}
-            </div>
-            <p class="text-xs text-muted-foreground">{stat.note}</p>
-          </div>
-          <div
-            class="stat-icon {stat.tone} flex size-10 shrink-0 items-center justify-center rounded-2xl"
-          >
-            <stat.icon class="size-[18px]" />
-          </div>
-        </Card.Content>
-      </Card.Root>
+      <Stats.Item>
+        <Stats.Figure
+          class="flex size-10 items-center justify-center rounded-2xl {statTones[
+            stat.tone
+          ]}"
+        >
+          <stat.icon class="size-[18px]" />
+        </Stats.Figure>
+        <Stats.Title>{stat.label}</Stats.Title>
+        <Stats.Value class="tabular-nums"
+          >{loading ? "—" : stat.value}</Stats.Value
+        >
+        <Stats.Desc>{stat.note}</Stats.Desc>
+      </Stats.Item>
     {/each}
-  </section>
+  </Stats.Root>
 
   <div class="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.85fr)]">
-    <Card.Root class="overflow-hidden border-border/80 shadow-sm">
+    <Card.Root class="overflow-hidden">
       <Card.Header
-        class="flex flex-row items-start justify-between gap-3 border-b border-border/70 px-5 py-5 sm:px-6"
+        class="flex-row items-start justify-between gap-3 px-5 py-5 sm:px-6"
       >
         <div>
-          <Card.Title class="text-lg">Your work queue</Card.Title>
-          <Card.Description class="mt-1">
+          <Card.Title>Your work queue</Card.Title>
+          <p class="mt-1 text-xs text-base-content/60">
             The next things to move forward.
-          </Card.Description>
+          </p>
         </div>
         <a
           href="/tasks/my"
@@ -294,17 +300,17 @@
         {:else if myTasks.length === 0}
           <div class="flex flex-col items-center px-6 py-14 text-center">
             <div
-              class="mb-4 flex size-12 items-center justify-center rounded-2xl bg-secondary text-primary"
+              class="mb-4 flex size-12 items-center justify-center rounded-2xl bg-base-200 text-primary"
             >
               <CheckCircle2Icon class="size-6" />
             </div>
             <p class="font-semibold">You're all clear</p>
-            <p class="mt-1 max-w-xs text-sm text-muted-foreground">
+            <p class="mt-1 max-w-xs text-sm text-base-content/60">
               Tasks assigned to you will show up here when they need attention.
             </p>
           </div>
         {:else}
-          <div class="divide-y divide-border/70">
+          <div class="divide-y divide-base-300/70">
             {#each myTasks.slice(0, 6) as task (task.id)}
               {@const badge = stateBadge({
                 workflow_state: task.workflow_state,
@@ -312,13 +318,13 @@
               })}
               {@const due = formatDueDate(task.due_date)}
               <button
-                class="task-row flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-muted/60 sm:px-6"
+                class="task-row flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-base-200/60 sm:px-6"
                 onclick={() => openTask(task)}
               >
                 <span
                   class="priority-mark"
                   style="--priority: {PRIORITY_META[task.priority]?.color ??
-                    '#789'}"
+                    'var(--color-base-content)'}"
                   aria-label="{task.priority} priority"
                 ></span>
                 <span class="min-w-0 flex-1">
@@ -326,7 +332,7 @@
                     >{task.title}</span
                   >
                   <span
-                    class="mt-1 flex items-center gap-2 text-xs text-muted-foreground"
+                    class="mt-1 flex items-center gap-2 text-xs text-base-content/60"
                   >
                     <span class="truncate">{projectName(task.project_id)}</span>
                     {#if task.task_key}
@@ -337,8 +343,8 @@
                 <span class="hidden shrink-0 text-right sm:block">
                   <span
                     class="block text-xs font-medium {due.isOverdue
-                      ? 'text-destructive'
-                      : 'text-muted-foreground'}"
+                      ? 'text-error'
+                      : 'text-base-content/60'}"
                   >
                     {due.relative}
                   </span>
@@ -347,7 +353,7 @@
                   </Badge>
                 </span>
                 <ChevronRightIcon
-                  class="size-4 shrink-0 text-muted-foreground/60"
+                  class="size-4 shrink-0 text-base-content/40"
                 />
               </button>
             {/each}
@@ -356,25 +362,23 @@
       </Card.Content>
     </Card.Root>
 
-    <Card.Root class="overflow-hidden border-border/80 shadow-sm">
-      <Card.Header
-        class="flex flex-row items-center justify-between border-b border-border/70 px-5 py-5"
-      >
+    <Card.Root class="overflow-hidden">
+      <Card.Header class="flex-row items-center justify-between px-5 py-5">
         <div>
-          <Card.Title class="text-lg">Coming up</Card.Title>
-          <Card.Description class="mt-1"
-            >Your nearest due dates</Card.Description
-          >
+          <Card.Title>Coming up</Card.Title>
+          <p class="mt-1 text-xs text-base-content/60">
+            Your nearest due dates
+          </p>
         </div>
         <a
           href="/planner"
           aria-label="Open planner"
-          class="flex size-9 items-center justify-center rounded-xl bg-secondary text-primary transition hover:bg-accent"
+          class="flex size-9 items-center justify-center rounded-xl bg-base-200 text-primary transition hover:bg-primary/10"
         >
           <CalendarDaysIcon class="size-4" />
         </a>
       </Card.Header>
-      <Card.Content class="p-5">
+      <Card.Content class="flex grow flex-col p-5">
         {#if loading}
           <div class="space-y-4">
             {#each Array.from({ length: 3 }) as _, i (i)}
@@ -383,9 +387,9 @@
           </div>
         {:else if upcomingTasks.length === 0}
           <div class="flex flex-col items-center py-8 text-center">
-            <CircleDashedIcon class="mb-3 size-8 text-muted-foreground/60" />
+            <CircleDashedIcon class="mb-3 size-8 text-base-content/40" />
             <p class="text-sm font-semibold">Nothing on the calendar</p>
-            <p class="mt-1 text-xs text-muted-foreground">
+            <p class="mt-1 text-xs text-base-content/60">
               Tasks with due dates will appear here.
             </p>
           </div>
@@ -406,14 +410,14 @@
                     >
                     <span
                       class="shrink-0 text-[11px] font-medium {due.isOverdue
-                        ? 'text-destructive'
-                        : 'text-muted-foreground'}"
+                        ? 'text-error'
+                        : 'text-base-content/60'}"
                     >
                       {due.relative}
                     </span>
                   </span>
                   <span
-                    class="mt-1 block truncate text-xs text-muted-foreground"
+                    class="mt-1 block truncate text-xs text-base-content/60"
                   >
                     {projectName(task.project_id)}
                   </span>
@@ -422,31 +426,28 @@
             {/each}
           </div>
         {/if}
+        <Card.Action class="mt-auto justify-end">
+          <a href="/planner" class="btn btn-primary">
+            Open team planner
+            <ArrowUpRightIcon class="size-4" />
+          </a>
+        </Card.Action>
       </Card.Content>
-      <div class="border-t border-border/70 bg-muted/35 px-5 py-4">
-        <a
-          href="/planner"
-          class="flex items-center justify-between text-xs font-semibold"
-        >
-          Open team planner
-          <ArrowUpRightIcon class="size-3.5 text-primary" />
-        </a>
-      </div>
     </Card.Root>
   </div>
 
   <section
     class="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.85fr)]"
   >
-    <Card.Root class="border-border/80 shadow-sm">
+    <Card.Root>
       <Card.Header
-        class="flex flex-row items-center justify-between gap-3 px-5 py-5 sm:px-6"
+        class="flex-row items-center justify-between gap-3 px-5 py-5 sm:px-6"
       >
         <div>
-          <Card.Title class="text-lg">Projects in motion</Card.Title>
-          <Card.Description class="mt-1"
-            >A pulse on active team work</Card.Description
-          >
+          <Card.Title>Projects in motion</Card.Title>
+          <p class="mt-1 text-xs text-base-content/60">
+            A pulse on active team work
+          </p>
         </div>
         <a
           href="/project/all"
@@ -462,7 +463,7 @@
           {/each}
         {:else if activeProjects.length === 0}
           <div
-            class="col-span-full rounded-2xl border border-dashed border-border px-5 py-8 text-center text-sm text-muted-foreground"
+            class="col-span-full rounded-2xl border border-dashed border-base-300 px-5 py-8 text-center text-sm text-base-content/60"
           >
             No active projects yet.
           </div>
@@ -471,32 +472,33 @@
             {@const progress = projectProgress(project.id)}
             <a
               href="/project/{project.id}"
-              class="project-tile rounded-2xl border border-border/70 p-4 transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-sm"
+              class="project-tile rounded-2xl border border-base-300/70 p-4 transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-sm"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="flex min-w-0 items-center gap-3">
                   <span
                     class="size-2.5 shrink-0 rounded-full"
-                    style="background-color: {project.color || '#557a64'}"
+                    style="background-color: {project.color ||
+                      'var(--color-base-content)'}"
                   ></span>
                   <span class="truncate text-sm font-semibold"
                     >{project.name}</span
                   >
                 </div>
                 <ArrowUpRightIcon
-                  class="size-4 shrink-0 text-muted-foreground"
+                  class="size-4 shrink-0 text-base-content/60"
                 />
               </div>
               <div
-                class="mt-5 flex items-center justify-between text-[11px] text-muted-foreground"
+                class="mt-5 flex items-center justify-between text-[11px] text-base-content/60"
               >
                 <span
                   >{tasks.filter((task) => task.project_id === project.id)
                     .length} tasks</span
                 >
-                <span class="font-semibold text-foreground">{progress}%</span>
+                <span class="font-semibold text-base-content">{progress}%</span>
               </div>
-              <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
+              <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-base-200">
                 <div
                   class="h-full rounded-full bg-primary transition-[width]"
                   style="width: {progress}%"
@@ -508,11 +510,10 @@
       </Card.Content>
     </Card.Root>
 
-    <Card.Root class="pulse-card overflow-hidden border shadow-sm">
+    <Card.Root class="overflow-hidden">
       <Card.Content
         class="relative flex h-full min-h-56 flex-col justify-between p-6 sm:p-7"
       >
-        <div class="pulse-orbit" aria-hidden="true"></div>
         <div class="relative">
           <div
             class="pulse-mark mb-5 flex size-10 items-center justify-center rounded-lg"
@@ -520,12 +521,12 @@
             <SparklesIcon class="size-5" />
           </div>
           <p
-            class="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground"
+            class="text-xs font-semibold uppercase tracking-[0.15em] text-base-content/60"
           >
             Team pulse
           </p>
           <h2
-            class="mt-2 max-w-xs text-2xl font-semibold tracking-tight text-foreground"
+            class="mt-2 max-w-xs text-2xl font-semibold tracking-tight text-base-content"
           >
             {#if isPM && reviewTasks.length > 0}
               {reviewTasks.length}
@@ -534,9 +535,7 @@
               Make space for focused work.
             {/if}
           </h2>
-          <p
-            class="mt-2 max-w-xs text-sm leading-relaxed text-muted-foreground"
-          >
+          <p class="mt-2 max-w-xs text-sm leading-relaxed text-base-content/60">
             {#if isPM && reviewTasks.length > 0}
               A quick review keeps work flowing and payments on schedule.
             {:else}
@@ -564,7 +563,7 @@
   }
 
   .eyebrow {
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.14em;
@@ -572,35 +571,7 @@
   }
 
   .greeting-mark {
-    color: var(--pastel-pink);
-  }
-
-  .stat-card {
-    background-image: linear-gradient(
-      135deg,
-      var(--card),
-      color-mix(in oklab, var(--pastel-rose) 55%, var(--card))
-    );
-  }
-
-  .stat-icon.moss {
-    background: var(--pastel-pink);
-    color: var(--foreground);
-  }
-
-  .stat-icon.blue {
-    background: var(--pastel-lilac);
-    color: var(--foreground);
-  }
-
-  .stat-icon.amber {
-    background: var(--pastel-gray);
-    color: var(--foreground);
-  }
-
-  .stat-icon.coral {
-    background: var(--pastel-rose);
-    color: var(--foreground);
+    color: var(--color-primary);
   }
 
   .priority-mark {
@@ -617,7 +588,7 @@
     bottom: 0.45rem;
     left: 0.27rem;
     width: 1px;
-    background: var(--border);
+    background: var(--color-base-300);
   }
 
   .timeline-dot {
@@ -626,54 +597,35 @@
     width: 0.62rem;
     height: 0.62rem;
     flex: 0 0 0.62rem;
-    border: 2px solid var(--card);
+    border: 2px solid var(--color-base-100);
     border-radius: 50%;
-    background: var(--primary);
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 25%, transparent);
+    background: var(--color-primary);
   }
 
   .timeline-dot.overdue {
-    background: var(--destructive);
-    box-shadow: 0 0 0 1px
-      color-mix(in oklab, var(--destructive) 25%, transparent);
-  }
-
-  .pulse-card {
-    color: var(--foreground);
-    background: radial-gradient(
-        ellipse at 100% 0%,
-        color-mix(in oklab, var(--pastel-pink) 58%, transparent),
-        transparent 48%
-      ),
-      linear-gradient(140deg, var(--pastel-rose), var(--card));
+    background: var(--color-error);
   }
 
   .pulse-mark {
-    background: color-mix(in oklab, var(--pastel-pink) 60%, var(--card));
-    color: var(--foreground);
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 12%,
+      var(--color-base-100)
+    );
+    color: var(--color-primary);
   }
 
   .pulse-link {
-    background: var(--pastel-pink);
-    color: var(--foreground);
+    background: var(--color-primary);
+    color: var(--color-primary-content);
   }
 
   .pulse-link:hover {
-    background: color-mix(in oklab, var(--pastel-pink) 76%, var(--card));
-  }
-
-  .pulse-orbit {
-    position: absolute;
-    top: -4.5rem;
-    right: -4rem;
-    width: 14rem;
-    height: 14rem;
-    border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
-    border-radius: 50%;
-    box-shadow:
-      0 0 0 1.7rem color-mix(in oklab, var(--pastel-pink) 24%, transparent),
-      0 0 0 3.4rem color-mix(in oklab, var(--pastel-pink) 16%, transparent);
-    pointer-events: none;
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 88%,
+      var(--color-base-100)
+    );
   }
 
   @keyframes arrive {

@@ -68,8 +68,6 @@ export const taskApi = {
 		category_id?: string;
 		priority?: string;
 		due_date?: string;
-		planned_start_at?: string;
-		planned_end_at?: string;
 		description?: string;
 	}): Promise<Task> {
 		const res = await apiJSON('/api/project-tasks/tasks', {

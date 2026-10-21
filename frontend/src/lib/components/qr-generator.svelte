@@ -2,14 +2,14 @@
   import { onMount } from "svelte";
   import { toast } from "$lib/notifications";
   import DOMPurify from "dompurify";
-  import * as Tabs from "$lib/components/native/tabs/index.js";
-  import * as Card from "$lib/components/native/card/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as Table from "$lib/components/native/table/index.js";
-  import { Input } from "$lib/components/native/input";
-  import { Textarea } from "$lib/components/native/textarea";
-  import { Button } from "$lib/components/native/button";
-  import * as Select from "$lib/components/native/select/index.js";
+  import * as Tabs from "$lib/components/ui/tabs/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as Table from "$lib/components/ui/table/index.js";
+  import { Input } from "$lib/components/ui/input";
+  import { Textarea } from "$lib/components/ui/textarea";
+  import { Button } from "$lib/components/ui/button";
+  import * as Select from "$lib/components/ui/select/index.js";
   import { apiFetch, apiJSON } from "$lib/api/index.js";
 
   let sourceType = $state("url");
@@ -264,7 +264,7 @@
             </Button>
           {/if}
         {:else}
-          <p class="text-muted-foreground">Generated QR will appear here</p>
+          <p class="text-base-content/60">Generated QR will appear here</p>
         {/if}
       </Card.Content>
     </Card.Root>
@@ -276,9 +276,9 @@
     </Card.Header>
     <Card.Content>
       {#if loading}
-        <p class="text-muted-foreground">Loading...</p>
+        <p class="text-base-content/60">Loading...</p>
       {:else if history.length === 0}
-        <p class="text-muted-foreground">No QR codes yet.</p>
+        <p class="text-base-content/60">No QR codes yet.</p>
       {:else}
         <Table.Root>
           <Table.Header>

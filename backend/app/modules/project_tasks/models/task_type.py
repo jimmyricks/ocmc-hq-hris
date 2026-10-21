@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.base_model import BaseModel
 
@@ -6,6 +6,9 @@ from app.core.base_model import BaseModel
 class TaskType(BaseModel):
     """Task Type entity model."""
     __tablename__ = "task_type"
+    __table_args__ = (
+        UniqueConstraint("id", "workspace_id", name="uq_task_type_id_workspace"),
+    )
     
     name: Mapped[str] = mapped_column(String(255), nullable=True, default=None)
     workspace_id: Mapped[str] = mapped_column(

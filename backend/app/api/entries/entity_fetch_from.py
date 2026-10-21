@@ -24,8 +24,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user_from_token
 from app.schemas.base import ActionResponse
-from app.api.dependencies import get_fetch_from_service, require_entity_permission
+from app.api.dependencies import (
+    get_fetch_from_service,
+    get_row_scope_service,
+    require_entity_permission,
+)
 from app.application.services.fetch_from_service import FetchFromService
+from app.application.services.access_control.row_scope_service import RowScopeService
+from app.core.exceptions import ForbiddenError
+from app.infrastructure.database.repositories.entity_repository import get_entity_model
 
 router = APIRouter(tags=["entity"])
 
@@ -38,6 +45,7 @@ async def get_fetch_from_fields(
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
     service: FetchFromService = Depends(get_fetch_from_service),
+    row_scope_service: RowScopeService = Depends(get_row_scope_service),
 ):
     """
     Return only the requested fields from a linked record plus display
@@ -49,7 +57,18 @@ async def get_fetch_from_fields(
       2. Resolves display titles only for those link fields.
     """
     # Auth — any authenticated user may read linked record fields for autofill.
-    await get_current_user_from_token(authorization, db)
+    user = await get_current_user_from_token(authorization, db)
+    model = get_entity_model(entity)
+    record = await db.get(model, record_id) if model else None
+    if not record or not await row_scope_service.can_access_record(
+        record,
+        entity,
+        user.id,
+        user.role_ids,
+        user.roles,
+        user.is_superuser,
+    ):
+        raise ForbiddenError("You don't have permission to read this record")
 
     requested_fields = [f.strip() for f in fields.split(",") if f.strip()]
     if not requested_fields:

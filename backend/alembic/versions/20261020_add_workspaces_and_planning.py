@@ -1,7 +1,7 @@
 """Add workspace and planning domain tables.
 
 Revision ID: 20261020_workspaces
-Revises: 66a03f8114a8
+Revises:
 Create Date: 2026-10-20
 """
 from typing import Sequence, Union
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = "20261020_workspaces"
-down_revision: Union[str, None] = "66a03f8114a8"
+down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -1,7 +1,53 @@
 import { apiJSON, listEntity, listFiltered, getEntityRecord } from '$lib/api/index.js';
-import type { PayrollEntry, PayrollLineItem, PayrollPeriod, PayrollSettings } from './types.js';
+import type {
+	EmployeeRateOptions,
+	PayrollEntry,
+	PayrollLineItem,
+	PayrollPeriod,
+	PayrollSettings,
+	UserTaskRate
+} from './types.js';
 
 export const payrollApi = {
+	async getEmployeeRates(): Promise<UserTaskRate[]> {
+		const res = await apiJSON('/api/payroll/rates');
+		return (res.data ?? []) as UserTaskRate[];
+	},
+
+	async getEmployeeRateOptions(workspaceId?: string): Promise<EmployeeRateOptions> {
+		const query = workspaceId
+			? `?workspace_id=${encodeURIComponent(workspaceId)}`
+			: '';
+		const res = await apiJSON(`/api/payroll/rate-options${query}`);
+		return res.data as EmployeeRateOptions;
+	},
+
+	async saveEmployeeRate(
+		payload: Omit<UserTaskRate, 'id' | 'created_at' | 'updated_at'>,
+		id?: string
+	): Promise<UserTaskRate> {
+		const res = await apiJSON(id ? `/api/payroll/rates/${id}` : '/api/payroll/rates', {
+			method: id ? 'PUT' : 'POST',
+			body: JSON.stringify(payload)
+		});
+		return res.data as UserTaskRate;
+	},
+
+	async deleteEmployeeRate(id: string): Promise<void> {
+		await apiJSON(`/api/payroll/rates/${id}`, { method: 'DELETE' });
+	},
+
+	async getHrSummary(): Promise<{
+		period_count: number;
+		entry_count: number;
+		approved_submission_count: number;
+		payroll_total: number;
+		invoice_total: number;
+	}> {
+		const res = await apiJSON('/api/payroll/hr/summary');
+		return res.data;
+	},
+
 	async getPeriods(): Promise<PayrollPeriod[]> {
 		const res = await listEntity('payroll_period', 1, 100);
 		return (res.data ?? []) as PayrollPeriod[];
@@ -93,4 +139,3 @@ export const payrollApi = {
 		return res.data as PayrollEntry;
 	},
 };
-

@@ -68,7 +68,8 @@
       "default": "active",
       "options": [
         "active",
-        "archived"
+        "archived",
+        "closed"
       ],
       "in_list_view": true
     },
@@ -81,6 +82,13 @@
       "name": "end_date",
       "label": "End Date",
       "field_type": "date"
+    },
+    {
+      "name": "is_continuous",
+      "label": "Continuous",
+      "field_type": "boolean",
+      "required": false,
+      "default": false
     }
   ],
   "rbac": {
@@ -88,16 +96,14 @@
       "*"
     ],
     "Administrator": [
-      "read",
-      "create",
-      "update"
+      "*"
     ],
     "ProjectManager": [
       "read",
       "create",
       "update"
     ],
-    "User": [
+    "Employee": [
       "read"
     ]
   }

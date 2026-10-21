@@ -37,6 +37,19 @@ def test_foreign_key_field_derives_link_type():
     assert field.link_entity == "workspace"
 
 
+def test_composite_foreign_keys_do_not_override_scalar_link_targets():
+    meta = MetaRegistry.get("task")
+    field = next(f for f in meta.fields if f.name == "workspace_id")
+    assert field.link_entity == "workspace"
+
+
+def test_non_nullable_field_with_default_remains_required_in_metadata():
+    meta = MetaRegistry.get("project")
+    field = next(f for f in meta.fields if f.name == "is_continuous")
+    assert field.required is True
+    assert field.default is False
+
+
 def test_json_ui_hints_override_derived_type():
     """A declared select/currency refinement keeps its UI type."""
     meta = MetaRegistry.get("task_type")

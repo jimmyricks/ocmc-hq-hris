@@ -5,9 +5,13 @@
   import { refCache } from "$lib/task-manager/ref-cache.js";
   import { workspaceApi } from "$lib/workspaces/api.js";
   import type { WorkspaceContext } from "$lib/workspaces/types.js";
-  import Button from "$lib/components/design/button.svelte";
-  import TextInput from "$lib/components/design/text-input.svelte";
-  import Modal from "$lib/components/design/modal.svelte";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Checkbox } from "$lib/components/ui/checkbox/index.js";
+  import { Input as TextInput } from "$lib/components/ui/input/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import * as Stats from "$lib/components/ui/stat/index.js";
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import SearchIcon from "@lucide/svelte/icons/search";
@@ -137,9 +141,13 @@
       toast.error("Task type name is required");
       return;
     }
+    if ((canChooseWorkspace || isEdit) && !workspaceId) {
+      toast.error("Company workspace is required");
+      return;
+    }
     const rate = unitRate.trim() === "" ? null : Number(unitRate);
-    if (rate === null || Number.isNaN(rate) || rate < 0) {
-      toast.error("Enter a valid unit rate");
+    if (rate === null || Number.isNaN(rate) || rate <= 0) {
+      toast.error("Enter a positive unit rate");
       return;
     }
     saving = true;
@@ -204,31 +212,42 @@
         Set consistent rates for the work each company delivers.
       </p>
     </div>
-    <Button variant="primary" onclick={openCreate}>
-      <PlusIcon size={16} />
-      Add task type
-    </Button>
+    <div class="flex flex-wrap gap-2">
+      <a class="btn btn-outline btn-sm" href="/payroll/employee-rates">
+        Employee overrides
+      </a>
+      <Button variant="primary" onclick={openCreate}>
+        <PlusIcon size={16} />
+        Add task type
+      </Button>
+    </div>
   </header>
 
-  <section class="rates-summary" aria-label="Rate catalog summary">
-    <div class="summary-card">
-      <span class="summary-card__label">Task types</span>
-      <strong>{records.length}</strong>
-      <span class="summary-card__hint">in the current workspace view</span>
-    </div>
-    <div class="summary-card">
-      <span class="summary-card__label">Workspace rates</span>
-      <strong>{records.filter((record) => record.workspace_id).length}</strong>
-      <span class="summary-card__hint">assigned to a company</span>
-    </div>
-    <div class="summary-card">
-      <span class="summary-card__label">Approval required</span>
-      <strong
-        >{records.filter((record) => record.requires_approval).length}</strong
+  <Stats.Root
+    class="w-full stats-vertical border border-base-300 bg-base-100 lg:stats-horizontal"
+    aria-label="Rate catalog summary"
+  >
+    <Stats.Item>
+      <Stats.Title>Task types</Stats.Title>
+      <Stats.Value class="tabular-nums">{records.length}</Stats.Value>
+      <Stats.Desc>in the current workspace view</Stats.Desc>
+    </Stats.Item>
+    <Stats.Item>
+      <Stats.Title>Workspace rates</Stats.Title>
+      <Stats.Value class="tabular-nums"
+        >{records.filter((record) => record.workspace_id).length}</Stats.Value
       >
-      <span class="summary-card__hint">before payroll eligibility</span>
-    </div>
-  </section>
+      <Stats.Desc>assigned to a company</Stats.Desc>
+    </Stats.Item>
+    <Stats.Item>
+      <Stats.Title>Approval required</Stats.Title>
+      <Stats.Value class="tabular-nums"
+        >{records.filter((record) => record.requires_approval)
+          .length}</Stats.Value
+      >
+      <Stats.Desc>before payroll eligibility</Stats.Desc>
+    </Stats.Item>
+  </Stats.Root>
 
   <section class="catalog-panel" aria-labelledby="catalog-title">
     <div class="catalog-toolbar">
@@ -236,18 +255,27 @@
         <h2 id="catalog-title">Rate catalog</h2>
         <p>Workspace ownership is fixed after a rate is created.</p>
       </div>
-      <label class="search-box">
-        <SearchIcon size={16} />
-        <span class="sr-only">Search task types</span>
-        <input bind:value={search} placeholder="Search task types..." />
+      <div class="relative w-full sm:w-[min(17.5rem,40%)]">
+        <SearchIcon
+          size={16}
+          class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-base-content/60"
+        />
+        <TextInput
+          bind:value={search}
+          placeholder="Search task types..."
+          aria-label="Search task types"
+          size="sm"
+          class="pl-9 pr-7"
+        />
         {#if search}
           <button
             type="button"
             aria-label="Clear search"
-            onclick={() => (search = "")}><XIcon size={15} /></button
+            class="absolute right-2 top-1/2 grid size-5 -translate-y-1/2 place-items-center text-base-content/60"
+            onclick={() => (search = "")}><XIcon size={16} /></button
           >
         {/if}
-      </label>
+      </div>
     </div>
 
     {#if error}
@@ -263,7 +291,7 @@
       </div>
     {:else if filteredRecords.length === 0}
       <div class="catalog-empty">
-        <span class="empty-icon"><ListChecksIcon size={22} /></span>
+        <span class="empty-icon"><ListChecksIcon size={24} /></span>
         <strong
           >{search ? "No matching task types" : "No task types yet"}</strong
         >
@@ -274,7 +302,7 @@
         </p>
         {#if !search}
           <Button variant="primary" size="sm" onclick={openCreate}>
-            <PlusIcon size={15} />
+            <PlusIcon size={16} />
             Add task type
           </Button>
         {/if}
@@ -356,139 +384,168 @@
   </section>
 </div>
 
-<Modal bind:open={modalOpen} labelledBy="task-rate-title" class="rate-modal">
-  <form
-    class="rate-form"
-    onsubmit={(event) => {
-      event.preventDefault();
-      handleSave();
-    }}
-  >
-    <header class="rate-form__header">
-      <div>
+<Dialog.Root bind:open={modalOpen}>
+  <Dialog.Content class="relative max-w-xl" aria-labelledby="task-rate-title">
+    <form
+      onsubmit={(event) => {
+        event.preventDefault();
+        handleSave();
+      }}
+    >
+      <Dialog.Close
+        class="btn btn-ghost btn-sm btn-circle absolute right-2 top-2"
+        aria-label="Close dialog"
+      >
+        <XIcon size={16} />
+      </Dialog.Close>
+      <Dialog.Header>
         <p class="eyebrow">
           {isEdit ? "Edit catalog item" : "New catalog item"}
         </p>
-        <h2 id="task-rate-title">
+        <Dialog.Title id="task-rate-title">
           {isEdit ? "Edit task type" : "Add a task type"}
-        </h2>
-        <p>
+        </Dialog.Title>
+        <Dialog.Description>
           {isEdit
             ? "Update the description, rate, and approval rule."
             : "Define who owns this rate and how approved work is paid."}
-        </p>
-      </div>
-      <button
-        class="modal-close"
-        type="button"
-        aria-label="Close dialog"
-        onclick={() => (modalOpen = false)}><XIcon size={18} /></button
-      >
-    </header>
+        </Dialog.Description>
+      </Dialog.Header>
 
-    <div class="rate-form__body">
-      {#if canChooseWorkspace || isEdit}
-        <label class="form-field">
-          <span>Company workspace <b>*</b></span>
-          <select
-            class="form-control"
-            bind:value={workspaceId}
-            disabled={isEdit}
-            required
-          >
-            <option value="">Select a workspace</option>
-            {#each workspaceContext?.workspaces ?? [] as workspace (workspace.id)}
-              <option value={workspace.id}>{workspace.name}</option>
-            {/each}
-          </select>
-          {#if isEdit}
-            <small
-              >Workspace attribution cannot be changed after creation.</small
+      <div class="flex flex-col gap-4">
+        {#if canChooseWorkspace || isEdit}
+          <label class="form-field">
+            <span>Company workspace <b>*</b></span>
+            <Select.Root
+              type="single"
+              bind:value={workspaceId}
+              disabled={isEdit}
             >
-          {/if}
-        </label>
-      {/if}
+              <Select.Trigger
+                class="w-full"
+                aria-label="Company workspace"
+                aria-required="true"
+              >
+                {workspaceId
+                  ? workspaceName(workspaceId)
+                  : "Select a workspace"}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="" label="Select a workspace">
+                  Select a workspace
+                </Select.Item>
+                {#each workspaceContext?.workspaces ?? [] as workspace (workspace.id)}
+                  <Select.Item value={workspace.id} label={workspace.name}>
+                    {workspace.name}
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            {#if isEdit}
+              <small
+                >Workspace attribution cannot be changed after creation.</small
+              >
+            {/if}
+          </label>
+        {/if}
 
-      <label class="form-field">
-        <span>Task type name <b>*</b></span>
-        <TextInput
-          id="tt-name"
-          bind:value={name}
-          placeholder="e.g. Audio mixing"
-          required
-          maxlength={255}
-        />
-      </label>
-
-      <label class="form-field">
-        <span>Description <small>Optional</small></span>
-        <textarea
-          id="tt-description"
-          class="form-control form-control--area"
-          bind:value={description}
-          placeholder="A short note to help the team choose the right type"
-          rows="3"
-          maxlength={1000}></textarea>
-      </label>
-
-      <div class="form-grid">
         <label class="form-field">
-          <span>Unit rate <b>*</b></span>
-          <div class="rate-input-wrap">
-            <span>₱</span>
-            <TextInput
-              id="tt-rate"
-              type="number"
-              min="0"
-              step="0.01"
-              bind:value={unitRate}
-              placeholder="0.00"
-              required
-            />
-          </div>
-          <small>Payroll uses this rate for approved work.</small>
+          <span>Task type name <b>*</b></span>
+          <TextInput
+            id="tt-name"
+            bind:value={name}
+            placeholder="e.g. Audio mixing"
+            required
+            maxlength={255}
+          />
         </label>
 
         <label class="form-field">
-          <span>Rate unit <b>*</b></span>
-          <select class="form-control" bind:value={unit} required>
-            {#each UNIT_OPTIONS as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
+          <span>Description <small>Optional</small></span>
+          <Textarea
+            id="tt-description"
+            class="min-h-20 resize-y"
+            bind:value={description}
+            placeholder="A short note to help the team choose the right type"
+            rows={3}
+            maxlength={1000}
+          />
+        </label>
+
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Unit rate <b>*</b></span>
+            <div class="rate-input-wrap">
+              <span>₱</span>
+              <TextInput
+                id="tt-rate"
+                type="number"
+                min="0"
+                step="0.01"
+                bind:value={unitRate}
+                placeholder="0.00"
+                required
+              />
+            </div>
+            <small>
+              Payroll pays one approved deliverable. Hourly rates stay
+              unavailable until submissions capture hours.
+            </small>
+          </label>
+
+          <label class="form-field">
+            <span>Rate unit <b>*</b></span>
+            <Select.Root type="single" bind:value={unit}>
+              <Select.Trigger
+                class="w-full"
+                aria-label="Rate unit"
+                aria-required="true"
+              >
+                {unitLabel(unit)}
+              </Select.Trigger>
+              <Select.Content>
+                {#each UNIT_OPTIONS as option (option.value)}
+                  <Select.Item value={option.value} label={option.label}>
+                    {option.label}
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </label>
+        </div>
+
+        <label class="approval-setting">
+          <Checkbox class="mt-0.5" bind:checked={requiresApproval} />
+          <span>
+            <strong>Require approval</strong>
+            <small
+              >Work must be approved before it can be included in payroll.</small
+            >
+          </span>
         </label>
       </div>
 
-      <label class="approval-setting">
-        <input type="checkbox" bind:checked={requiresApproval} />
-        <span class="approval-setting__check" aria-hidden="true"></span>
-        <span>
-          <strong>Require approval</strong>
-          <small
-            >Work must be approved before it can be included in payroll.</small
-          >
-        </span>
-      </label>
-    </div>
-
-    <footer class="rate-form__footer">
-      {#if isEdit}
-        <Button variant="danger" disabled={saving} onclick={handleDelete}>
-          <Trash2Icon size={15} />
-          Delete
-        </Button>
-      {:else}
-        <span></span>
-      {/if}
-      <div class="footer-actions">
-        <Button onclick={() => (modalOpen = false)}>Cancel</Button>
-        <Button variant="primary" type="submit" disabled={saving}>
-          {saving ? "Saving…" : isEdit ? "Save changes" : "Create task type"}
-        </Button>
-      </div>
-    </footer>
-  </form>
-</Modal>
+      <Dialog.Footer class="justify-between">
+        {#if isEdit}
+          <Button variant="danger" disabled={saving} onclick={handleDelete}>
+            <Trash2Icon size={16} />
+            Delete
+          </Button>
+        {:else}
+          <span></span>
+        {/if}
+        <div class="flex gap-2">
+          <Button variant="outline" onclick={() => (modalOpen = false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" disabled={saving}>
+            {saving ? "Saving…" : isEdit ? "Save changes" : "Create task type"}
+          </Button>
+        </div>
+      </Dialog.Footer>
+    </form>
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
   .rates-page {
@@ -504,7 +561,7 @@
   }
   .eyebrow {
     margin: 0 0 6px;
-    color: #6d7b91;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.12em;
@@ -512,58 +569,28 @@
   }
   .rates-heading h1 {
     margin: 0;
-    color: #202a38;
+    color: var(--color-base-content);
     font-size: clamp(25px, 3vw, 32px);
     font-weight: 700;
     letter-spacing: -0.045em;
   }
   .rates-subtitle {
     margin: 7px 0 0;
-    color: #687588;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 13px;
-  }
-  .rates-summary {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-  .summary-card {
-    display: grid;
-    min-height: 108px;
-    align-content: center;
-    gap: 4px;
-    border: 1px solid #dbe1e9;
-    border-radius: 10px;
-    background: #fff;
-    padding: 16px 18px;
-  }
-  .summary-card__label {
-    color: #687588;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .summary-card strong {
-    color: #202a38;
-    font-size: 25px;
-    font-weight: 700;
-    letter-spacing: -0.04em;
-  }
-  .summary-card__hint {
-    color: #8792a2;
-    font-size: 11px;
   }
   .catalog-panel {
     overflow: hidden;
-    border: 1px solid #dbe1e9;
+    border: 1px solid var(--color-base-300);
     border-radius: 10px;
-    background: #fff;
+    background: var(--color-base-100);
   }
   .catalog-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 18px;
-    border-bottom: 1px solid #e7ebf1;
+    border-bottom: 1px solid var(--color-base-300);
     padding: 17px 19px;
   }
   .catalog-toolbar h2 {
@@ -574,44 +601,10 @@
   }
   .catalog-toolbar p {
     margin: 4px 0 0;
-    color: #7b8797;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 11px;
   }
-  .search-box {
-    display: flex;
-    width: min(280px, 40%);
-    min-height: 36px;
-    align-items: center;
-    gap: 8px;
-    border: 1px solid #dbe1e9;
-    border-radius: 8px;
-    padding: 0 9px;
-    color: #7a8798;
-  }
-  .search-box:focus-within {
-    border-color: #7895e8;
-    box-shadow: 0 0 0 3px rgb(120 149 232 / 17%);
-  }
-  .search-box input {
-    width: 100%;
-    min-width: 0;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: #202a38;
-    font-size: 12px;
-  }
-  .search-box button {
-    display: grid;
-    width: 22px;
-    height: 22px;
-    flex: none;
-    place-items: center;
-    border: 0;
-    background: transparent;
-    color: #77869a;
-    cursor: pointer;
-  }
+
   .rates-table-wrap {
     overflow-x: auto;
   }
@@ -623,10 +616,10 @@
   }
   .rates-table th {
     height: 41px;
-    border-bottom: 1px solid #e7ebf1;
-    background: #fafbfd;
+    border-bottom: 1px solid var(--color-base-300);
+    background: var(--color-base-200);
     padding: 0 16px;
-    color: #758196;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.07em;
@@ -634,22 +627,22 @@
   }
   .rates-table td {
     height: 62px;
-    border-bottom: 1px solid #edf0f4;
+    border-bottom: 1px solid var(--color-base-300);
     padding: 8px 16px;
-    color: #465469;
+    color: var(--color-base-content);
     font-size: 12px;
   }
   .rates-table tr:last-child td {
     border-bottom: 0;
   }
   .rates-table tbody tr:hover {
-    background: #fafbfd;
+    background: var(--color-base-200);
   }
   .numeric {
     text-align: right;
   }
   .rate-value {
-    color: #26364b !important;
+    color: var(--color-base-content) !important;
     font-variant-numeric: tabular-nums;
     font-weight: 700;
   }
@@ -670,10 +663,15 @@
     height: 32px;
     flex: none;
     place-items: center;
-    border: 1px solid #dce5f7;
+    border: 1px solid
+      color-mix(in oklab, var(--color-primary) 12%, var(--color-base-100));
     border-radius: 8px;
-    background: #eff3ff;
-    color: #2457d6;
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 12%,
+      var(--color-base-100)
+    );
+    color: var(--color-primary);
     font-size: 12px;
     font-weight: 700;
   }
@@ -682,7 +680,7 @@
     display: block;
   }
   .task-name strong {
-    color: #344256;
+    color: var(--color-base-content);
     font-size: 12px;
     font-weight: 650;
   }
@@ -690,7 +688,7 @@
     max-width: 280px;
     overflow: hidden;
     margin-top: 3px;
-    color: #8792a2;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 10px;
     text-overflow: ellipsis;
   }
@@ -698,7 +696,7 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    color: #536176;
+    color: var(--color-base-content);
   }
   .workspace-badge__dot {
     width: 8px;
@@ -710,7 +708,7 @@
     min-height: 24px;
     align-items: center;
     gap: 6px;
-    border: 1px solid #dbe1e9;
+    border: 1px solid var(--color-base-300);
     border-radius: 999px;
     padding: 0 8px;
     font-size: 10px;
@@ -722,28 +720,36 @@
     border-radius: 50%;
   }
   .approval-yes {
-    border-color: #cce9da;
-    background: #f1faf5;
-    color: #28704d;
+    border-color: color-mix(
+      in oklab,
+      var(--color-success) 22%,
+      var(--color-base-100)
+    );
+    background: color-mix(
+      in oklab,
+      var(--color-success) 8%,
+      var(--color-base-100)
+    );
+    color: var(--color-success);
   }
   .approval-yes > span {
-    background: #299465;
+    background: var(--color-success);
   }
   .approval-no {
-    background: #f7f8fa;
-    color: #687588;
+    background: var(--color-base-200);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
   }
   .approval-no > span {
-    background: #9aa5b4;
+    background: color-mix(in oklab, var(--color-base-content) 62%, transparent);
   }
   .action-cell {
     width: 80px;
     text-align: right;
   }
   .catalog-footer {
-    border-top: 1px solid #e7ebf1;
+    border-top: 1px solid var(--color-base-300);
     padding: 11px 17px;
-    color: #8792a2;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 10px;
   }
   .catalog-loading,
@@ -754,14 +760,14 @@
     align-items: center;
     justify-content: center;
     gap: 10px;
-    color: #687588;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 13px;
   }
   .loading-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #2457d6;
+    background: var(--color-primary);
     animation: pulse 1s ease-in-out infinite alternate;
   }
   .catalog-empty {
@@ -772,13 +778,13 @@
   }
   .catalog-empty strong {
     margin-top: 5px;
-    color: #344256;
+    color: var(--color-base-content);
     font-size: 14px;
   }
   .catalog-empty p {
     max-width: 350px;
     margin: 0 0 8px;
-    color: #7b8797;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 12px;
   }
   .empty-icon {
@@ -786,101 +792,39 @@
     width: 45px;
     height: 45px;
     place-items: center;
-    border: 1px solid #dbe1e9;
+    border: 1px solid var(--color-base-300);
     border-radius: 12px;
-    background: #f6f8fb;
-    color: #61738e;
+    background: var(--color-base-200);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
   }
   .catalog-error {
     flex-direction: column;
-    color: #ad2635;
+    color: var(--color-error);
   }
   .catalog-error span {
     max-width: 600px;
-    color: #687588;
-  }
-  :global(dialog.rate-modal) {
-    width: min(580px, calc(100vw - 28px));
-  }
-  .rate-form__header {
-    display: flex;
-    justify-content: space-between;
-    gap: 14px;
-    border-bottom: 1px solid #e7ebf1;
-    padding: 22px 24px 18px;
-  }
-  .rate-form__header h2 {
-    margin: 0;
-    color: #202a38;
-    font-size: 21px;
-    font-weight: 700;
-  }
-  .rate-form__header p:last-child {
-    margin: 6px 0 0;
-    color: #778396;
-    font-size: 12px;
-  }
-  .modal-close {
-    display: grid;
-    width: 32px;
-    height: 32px;
-    flex: none;
-    place-items: center;
-    border: 1px solid #e0e5ec;
-    border-radius: 8px;
-    background: #fff;
-    color: #687588;
-    cursor: pointer;
-  }
-  .rate-form__body {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    padding: 20px 24px;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
   }
   .form-field {
     display: flex;
     flex-direction: column;
     gap: 7px;
-    color: #465469;
+    color: var(--color-base-content);
     font-size: 11px;
     font-weight: 650;
   }
   .form-field > span b {
-    color: #2457d6;
+    color: var(--color-primary);
   }
   .form-field > span small {
     margin-left: 4px;
-    color: #8b96a6;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-weight: 450;
   }
   .form-field > small {
-    color: #8792a2;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 10px;
     font-weight: 450;
-  }
-  .form-control {
-    width: 100%;
-    min-height: 39px;
-    border: 1px solid #cbd3df;
-    border-radius: 8px;
-    background: #fff;
-    padding: 0 11px;
-    color: #202a38;
-    font-size: 12px;
-  }
-  .form-control:focus {
-    border-color: #2457d6;
-    outline: 3px solid rgb(120 149 232 / 20%);
-  }
-  .form-control:disabled {
-    background: #f0f3f7;
-    color: #748196;
-  }
-  .form-control--area {
-    min-height: 78px;
-    resize: vertical;
-    padding: 9px 11px;
   }
   .form-grid {
     display: grid;
@@ -895,7 +839,7 @@
     top: 50%;
     left: 11px;
     z-index: 1;
-    color: #687588;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 13px;
     transform: translateY(-50%);
   }
@@ -906,69 +850,25 @@
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    border: 1px solid #dbe1e9;
+    border: 1px solid var(--color-base-300);
     border-radius: 9px;
     padding: 12px;
     cursor: pointer;
-  }
-  .approval-setting input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-  }
-  .approval-setting__check {
-    display: grid;
-    width: 17px;
-    height: 17px;
-    flex: none;
-    place-items: center;
-    border: 1px solid #b8c3d2;
-    border-radius: 5px;
-    background: #fff;
-  }
-  .approval-setting input:checked + .approval-setting__check {
-    border-color: #2457d6;
-    background: #2457d6;
-  }
-  .approval-setting input:checked + .approval-setting__check::after {
-    width: 7px;
-    height: 4px;
-    border-bottom: 2px solid #fff;
-    border-left: 2px solid #fff;
-    content: "";
-    transform: translateY(-1px) rotate(-45deg);
-  }
-  .approval-setting input:focus-visible + .approval-setting__check {
-    outline: 3px solid rgb(120 149 232 / 30%);
   }
   .approval-setting strong,
   .approval-setting small {
     display: block;
   }
   .approval-setting strong {
-    color: #344256;
+    color: var(--color-base-content);
     font-size: 12px;
   }
   .approval-setting small {
     margin-top: 3px;
-    color: #8792a2;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 10px;
     font-weight: 450;
     line-height: 1.45;
-  }
-  .rate-form__footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    border-top: 1px solid #e7ebf1;
-    background: #fafbfd;
-    padding: 13px 24px;
-  }
-  .footer-actions {
-    display: flex;
-    gap: 8px;
   }
   @keyframes pulse {
     to {
@@ -981,34 +881,12 @@
       align-items: flex-start;
       flex-direction: column;
     }
-    .rates-summary {
-      grid-template-columns: 1fr;
-      gap: 8px;
-    }
-    .summary-card {
-      min-height: 82px;
-    }
     .catalog-toolbar {
       align-items: stretch;
       flex-direction: column;
     }
-    .search-box {
-      width: 100%;
-    }
-    .rate-form__header,
-    .rate-form__body,
-    .rate-form__footer {
-      padding-inline: 16px;
-    }
     .form-grid {
       grid-template-columns: 1fr;
-    }
-    .rate-form__footer {
-      align-items: stretch;
-      flex-direction: column-reverse;
-    }
-    .footer-actions {
-      justify-content: flex-end;
     }
   }
 </style>

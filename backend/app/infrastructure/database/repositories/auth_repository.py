@@ -74,6 +74,12 @@ class AuthRepository:
         )
         return list(result.scalars().all())
 
+    async def get_role_names(self, role_ids: List[str]) -> List[str]:
+        result = await self.db.scalars(
+            select(Role.name).where(Role.id.in_(role_ids))
+        )
+        return list(result.all())
+
     async def get_entity_permissions(
         self, role_ids: List[str], entity_name: Optional[str] = None
     ) -> List[EntityPermission]:

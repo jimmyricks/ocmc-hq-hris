@@ -1,11 +1,12 @@
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, func, literal, or_, select, union_all
+from sqlalchemy import and_, exists, false, func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db, get_row_scope_service
@@ -21,6 +22,7 @@ from app.modules.workspaces.models import (
     ScheduleOccurrence,
     ScheduleSeries,
     Workspace,
+    WorkspaceMembership,
     WorkspaceResource,
     WorkspaceTeam,
 )
@@ -162,6 +164,18 @@ def _activity_dict(row, resources: list[dict] | None = None) -> dict:
         ),
         "resources": resources or [],
     }
+
+
+def _utc_naive(value: datetime) -> datetime:
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+
+def _validate_planner_range(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+    if end <= start:
+        raise BadRequestError("end must be later than start")
+    if end - start > timedelta(days=MAX_RANGE_DAYS):
+        raise BadRequestError(f"Planner date range cannot exceed {MAX_RANGE_DAYS} days")
+    return _utc_naive(start), _utc_naive(end)
 
 
 async def _create_resource_booking(
@@ -425,28 +439,21 @@ async def list_planner_activities(
     page_size: int = Query(100, ge=1, le=500),
     project_id: str | None = None,
     team_id: str | None = None,
+    workspace_id: str | None = None,
     current_user: CurrentUser = Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
     row_scope: RowScopeService = Depends(get_row_scope_service),
 ):
-    if end <= start:
-        raise BadRequestError("end must be later than start")
-    if end - start > timedelta(days=MAX_RANGE_DAYS):
-        raise BadRequestError(f"Planner date range cannot exceed {MAX_RANGE_DAYS} days")
+    start_utc, end_utc = _validate_planner_range(start, end)
 
-    start_utc = start.astimezone(timezone.utc).replace(tzinfo=None) if start.tzinfo else start
-    end_utc = end.astimezone(timezone.utc).replace(tzinfo=None) if end.tzinfo else end
-
-    task_start = func.coalesce(Task.planned_start_at, Task.due_date)
-    task_end = func.coalesce(Task.planned_end_at, Task.planned_start_at, Task.due_date)
     task_query = (
         select(
             literal("task").label("source_type"),
             Task.id.label("source_id"),
             literal("task").label("kind"),
             Task.title.label("title"),
-            task_start.label("starts_at"),
-            task_end.label("ends_at"),
+            Task.due_date.label("starts_at"),
+            Task.due_date.label("ends_at"),
             literal(False).label("all_day"),
             Task.status.label("status"),
             Project.workspace_id.label("workspace_id"),
@@ -461,24 +468,17 @@ async def list_planner_activities(
         .join(Workspace, Workspace.id == Project.workspace_id)
         .outerjoin(WorkspaceTeam, WorkspaceTeam.id == Project.team_id)
         .where(
-            or_(
-                and_(
-                    Task.planned_start_at.is_not(None),
-                    task_start < end_utc,
-                    task_end > start_utc,
-                ),
-                and_(
-                    Task.due_date.is_not(None),
-                    Task.due_date >= start_utc,
-                    Task.due_date < end_utc,
-                ),
-            )
+            Task.due_date.is_not(None),
+            Task.due_date >= start_utc,
+            Task.due_date < end_utc,
         )
     )
     if project_id:
         task_query = task_query.where(Task.project_id == project_id)
     if team_id:
         task_query = task_query.where(Project.team_id == team_id)
+    if workspace_id:
+        task_query = task_query.where(Project.workspace_id == workspace_id)
     task_query = await row_scope.apply_scope_to_query(
         task_query,
         Task,
@@ -519,6 +519,8 @@ async def list_planner_activities(
         event_query = event_query.where(PlannerEvent.project_id == project_id)
     if team_id:
         event_query = event_query.where(PlannerEvent.team_id == team_id)
+    if workspace_id:
+        event_query = event_query.where(PlannerEvent.workspace_id == workspace_id)
     event_query = await row_scope.apply_scope_to_query(
         event_query,
         PlannerEvent,
@@ -563,6 +565,8 @@ async def list_planner_activities(
         occurrence_query = occurrence_query.where(ScheduleSeries.project_id == project_id)
     if team_id:
         occurrence_query = occurrence_query.where(ScheduleSeries.team_id == team_id)
+    if workspace_id:
+        occurrence_query = occurrence_query.where(ScheduleSeries.workspace_id == workspace_id)
     occurrence_query = await row_scope.apply_scope_to_query(
         occurrence_query,
         ScheduleOccurrence,
@@ -573,15 +577,149 @@ async def list_planner_activities(
         current_user.is_superuser,
     )
 
+    workspace_rows = (
+        await db.execute(
+            select(Workspace.id, Workspace.timezone).where(Workspace.is_active.is_(True))
+        )
+    ).all()
+    boundary_conditions = []
+    workspace_zones: dict[str, ZoneInfo] = {}
+    workspace_date_ranges: dict[str, tuple[date, date]] = {}
+    for workspace_row in workspace_rows:
+        zone = _zone(workspace_row.timezone)
+        workspace_zones[workspace_row.id] = zone
+        local_start = start.astimezone(zone) if start.tzinfo else start.replace(tzinfo=timezone.utc).astimezone(zone)
+        local_last_instant = end - timedelta(microseconds=1)
+        if local_last_instant.tzinfo is None:
+            local_last_instant = local_last_instant.replace(tzinfo=timezone.utc)
+        local_end = local_last_instant.astimezone(zone)
+        workspace_date_ranges[workspace_row.id] = (
+            local_start.date(),
+            local_end.date(),
+        )
+        boundary_conditions.append(
+            and_(
+                Project.workspace_id == workspace_row.id,
+                or_(
+                    and_(
+                        Project.start_date.is_not(None),
+                        Project.start_date >= local_start.date(),
+                        Project.start_date <= local_end.date(),
+                    ),
+                    and_(
+                        Project.is_continuous.is_(False),
+                        Project.end_date.is_not(None),
+                        Project.end_date >= local_start.date(),
+                        Project.end_date <= local_end.date(),
+                    ),
+                ),
+            )
+        )
+    project_schedule_query = (
+        select(
+            Project.id.label("project_id"),
+            Project.name.label("project_name"),
+            Project.workspace_id.label("workspace_id"),
+            Workspace.name.label("workspace_name"),
+            Workspace.color.label("workspace_color"),
+            Project.team_id.label("team_id"),
+            WorkspaceTeam.name.label("team_name"),
+            Project.start_date.label("start_date"),
+            Project.end_date.label("end_date"),
+            Project.is_continuous.label("is_continuous"),
+            Project.status.label("status"),
+        )
+        .join(Workspace, Workspace.id == Project.workspace_id)
+        .outerjoin(WorkspaceTeam, WorkspaceTeam.id == Project.team_id)
+        .where(
+            or_(*boundary_conditions) if boundary_conditions else false(),
+        )
+    )
+    if project_id:
+        project_schedule_query = project_schedule_query.where(Project.id == project_id)
+    if team_id:
+        project_schedule_query = project_schedule_query.where(Project.team_id == team_id)
+    if workspace_id:
+        project_schedule_query = project_schedule_query.where(
+            Project.workspace_id == workspace_id
+        )
+    project_schedule_query = await row_scope.apply_scope_to_query(
+        project_schedule_query,
+        Project,
+        "project",
+        current_user.id,
+        current_user.role_ids,
+        current_user.roles,
+        current_user.is_superuser,
+    )
+    project_schedule_rows = (await db.execute(project_schedule_query)).all()
+
     activities = union_all(task_query, event_query, occurrence_query).subquery()
-    total = await db.scalar(select(func.count()).select_from(activities))
+    base_total = await db.scalar(select(func.count()).select_from(activities))
     result = await db.execute(
         select(activities)
-        .order_by(activities.c.starts_at, activities.c.source_type, activities.c.source_id)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        .order_by(
+            activities.c.starts_at,
+            activities.c.source_type,
+            activities.c.source_id,
+        )
+        .limit(page * page_size)
     )
-    rows = result.all()
+    all_rows = list(result.all())
+    project_activities = []
+    for project_row in project_schedule_rows:
+        zone = workspace_zones[project_row.workspace_id]
+        local_start_date, local_end_date = workspace_date_ranges[
+            project_row.workspace_id
+        ]
+        milestones = (
+            ("project_start", project_row.start_date, "starts"),
+            (
+                "project_deadline",
+                project_row.end_date if not project_row.is_continuous else None,
+                "deadline",
+            ),
+        )
+        for source_type, milestone_date, label in milestones:
+            if (
+                milestone_date is None
+                or milestone_date < local_start_date
+                or milestone_date > local_end_date
+            ):
+                continue
+            starts_at = datetime.combine(
+                milestone_date, datetime.min.time(), tzinfo=zone
+            )
+            project_activities.append(
+                SimpleNamespace(
+                    source_type=source_type,
+                    source_id=project_row.project_id,
+                    kind=source_type,
+                    title=f"{project_row.project_name} {label}",
+                    starts_at=starts_at,
+                    ends_at=starts_at + timedelta(days=1),
+                    all_day=True,
+                    status=project_row.status or "active",
+                    workspace_id=project_row.workspace_id,
+                    workspace_name=project_row.workspace_name,
+                    workspace_color=project_row.workspace_color,
+                    project_id=project_row.project_id,
+                    project_name=project_row.project_name,
+                    team_id=project_row.team_id,
+                    team_name=project_row.team_name,
+                )
+            )
+    all_rows.extend(project_activities)
+
+    all_rows.sort(
+        key=lambda row: (
+            _utc_naive(row.starts_at),
+            row.source_type,
+            row.source_id,
+        )
+    )
+    total = (base_total or 0) + len(project_activities)
+    rows = all_rows[(page - 1) * page_size : page * page_size]
     resource_bookings: dict[tuple[str, str], list[dict]] = {}
     event_ids = [
         row.source_id for row in rows if row.source_type == "planner_event"
@@ -708,6 +846,247 @@ async def create_planner_event(
     await db.commit()
     await db.refresh(record)
     return {"status": "success", "data": {"id": record.id, "workspace_id": record.workspace_id}}
+
+
+@router.get("/activities/summary")
+async def list_foreign_schedule_summary(
+    start: datetime,
+    end: datetime,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+    workspace_id: str | None = None,
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+    active_workspace_id: str | None = Header(None, alias="X-Workspace-ID"),
+):
+    """Return coordination-only schedule projections outside supervisor workspaces."""
+    start_utc, end_utc = _validate_planner_range(start, end)
+    supervisor_workspace_ids = set(
+        (
+            await db.scalars(
+                select(WorkspaceMembership.workspace_id).where(
+                    WorkspaceMembership.user_id == current_user.id,
+                    WorkspaceMembership.membership_role == "supervisor",
+                    WorkspaceMembership.is_active.is_(True),
+                )
+            )
+        ).all()
+    )
+    if not supervisor_workspace_ids:
+        raise ForbiddenError("Global schedule summaries are only available to supervisors")
+    context = await WorkspaceService.resolve_context(
+        db,
+        current_user.id,
+        current_user.roles,
+        current_user.is_superuser,
+        active_workspace_id,
+    )
+    active_workspace_id = context.active_workspace_id
+    if not active_workspace_id:
+        raise ForbiddenError("Select an assigned workspace to view schedule summaries")
+
+    summary_rows = []
+    task_query = (
+        select(
+            literal("task").label("kind"),
+            Task.due_date.label("starts_at"),
+            Task.due_date.label("ends_at"),
+            Task.status.label("status"),
+            Project.workspace_id.label("workspace_id"),
+            Workspace.name.label("workspace_name"),
+            Workspace.color.label("workspace_color"),
+            Workspace.timezone.label("workspace_timezone"),
+            literal(False).label("all_day"),
+            literal(None).label("has_resource"),
+        )
+        .join(Project, Project.id == Task.project_id)
+        .join(Workspace, Workspace.id == Project.workspace_id)
+        .where(
+            Project.workspace_id != active_workspace_id,
+            Workspace.is_active.is_(True),
+            Task.due_date.is_not(None),
+            Task.due_date >= start_utc,
+            Task.due_date < end_utc,
+        )
+    )
+    if workspace_id:
+        task_query = task_query.where(Project.workspace_id == workspace_id)
+    summary_rows.extend((await db.execute(task_query)).all())
+
+    event_query = (
+        select(
+            PlannerEvent.event_type.label("kind"),
+            PlannerEvent.starts_at.label("starts_at"),
+            PlannerEvent.ends_at.label("ends_at"),
+            PlannerEvent.status.label("status"),
+            Workspace.id.label("workspace_id"),
+            Workspace.name.label("workspace_name"),
+            Workspace.color.label("workspace_color"),
+            Workspace.timezone.label("workspace_timezone"),
+            PlannerEvent.all_day.label("all_day"),
+            exists()
+            .where(
+                ResourceBooking.event_id == PlannerEvent.id,
+                ResourceBooking.status != "cancelled",
+            )
+            .label("has_resource"),
+        )
+        .join(Workspace, Workspace.id == PlannerEvent.workspace_id)
+        .where(
+            PlannerEvent.workspace_id != active_workspace_id,
+            Workspace.is_active.is_(True),
+            PlannerEvent.starts_at < end_utc,
+            PlannerEvent.ends_at > start_utc,
+        )
+    )
+    if workspace_id:
+        event_query = event_query.where(PlannerEvent.workspace_id == workspace_id)
+    summary_rows.extend((await db.execute(event_query)).all())
+
+    occurrence_query = (
+        select(
+            ScheduleSeries.event_type.label("kind"),
+            ScheduleOccurrence.starts_at.label("starts_at"),
+            ScheduleOccurrence.ends_at.label("ends_at"),
+            ScheduleOccurrence.status.label("status"),
+            Workspace.id.label("workspace_id"),
+            Workspace.name.label("workspace_name"),
+            Workspace.color.label("workspace_color"),
+            Workspace.timezone.label("workspace_timezone"),
+            literal(False).label("all_day"),
+            exists()
+            .where(
+                ResourceBooking.occurrence_id == ScheduleOccurrence.id,
+                ResourceBooking.status != "cancelled",
+            )
+            .label("has_resource"),
+        )
+        .join(ScheduleSeries, ScheduleSeries.id == ScheduleOccurrence.series_id)
+        .join(Workspace, Workspace.id == ScheduleSeries.workspace_id)
+        .where(
+            ScheduleSeries.workspace_id != active_workspace_id,
+            Workspace.is_active.is_(True),
+            ScheduleOccurrence.starts_at < end_utc,
+            ScheduleOccurrence.ends_at > start_utc,
+            ScheduleOccurrence.status != "cancelled",
+        )
+    )
+    if workspace_id:
+        occurrence_query = occurrence_query.where(
+            ScheduleSeries.workspace_id == workspace_id
+        )
+    summary_rows.extend((await db.execute(occurrence_query)).all())
+
+    foreign_workspaces_query = select(Workspace).where(
+        Workspace.is_active.is_(True),
+        Workspace.id != active_workspace_id,
+    )
+    if workspace_id:
+        foreign_workspaces_query = foreign_workspaces_query.where(
+            Workspace.id == workspace_id
+        )
+    foreign_workspaces = list((await db.scalars(foreign_workspaces_query)).all())
+    for workspace in foreign_workspaces:
+        zone = _zone(workspace.timezone)
+        local_start = start_utc.replace(tzinfo=timezone.utc).astimezone(zone)
+        local_end = (end_utc - timedelta(microseconds=1)).replace(
+            tzinfo=timezone.utc
+        ).astimezone(zone)
+        projects = await db.execute(
+            select(
+                Project.start_date,
+                Project.end_date,
+                Project.is_continuous,
+                Project.status,
+            ).where(
+                Project.workspace_id == workspace.id,
+                or_(
+                    and_(
+                        Project.start_date.is_not(None),
+                        Project.start_date >= local_start.date(),
+                        Project.start_date <= local_end.date(),
+                    ),
+                    and_(
+                        Project.is_continuous.is_(False),
+                        Project.end_date.is_not(None),
+                        Project.end_date >= local_start.date(),
+                        Project.end_date <= local_end.date(),
+                    ),
+                ),
+            )
+        )
+        for start_date, end_date, is_continuous, status in projects.all():
+            milestones = (
+                ("project_start", start_date),
+                ("project_deadline", end_date if not is_continuous else None),
+            )
+            for kind, milestone_date in milestones:
+                if milestone_date is None:
+                    continue
+                summary_rows.append(
+                    {
+                        "kind": kind,
+                        "starts_at": datetime.combine(
+                            milestone_date, datetime.min.time(), tzinfo=zone
+                        ),
+                        "ends_at": datetime.combine(
+                            milestone_date + timedelta(days=1),
+                            datetime.min.time(),
+                            tzinfo=zone,
+                        ),
+                        "status": status or "active",
+                        "workspace_id": workspace.id,
+                        "workspace_name": workspace.name,
+                        "workspace_color": workspace.color,
+                        "all_day": True,
+                        "has_resource": False,
+                    }
+                )
+
+    summary_rows.sort(
+        key=lambda row: (
+            _utc_naive(
+                row["starts_at"] if isinstance(row, dict) else row.starts_at
+            ),
+            row["workspace_id"] if isinstance(row, dict) else row.workspace_id,
+        )
+    )
+    total = len(summary_rows)
+    page_rows = summary_rows[(page - 1) * page_size : page * page_size]
+    data = []
+    for row in page_rows:
+        value = row if isinstance(row, dict) else row._mapping
+        starts_at = value["starts_at"]
+        ends_at = value["ends_at"]
+        zone = _zone(value.get("workspace_timezone") or "UTC")
+        if starts_at and starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc).astimezone(zone)
+        if ends_at and ends_at.tzinfo is None:
+            ends_at = ends_at.replace(tzinfo=timezone.utc).astimezone(zone)
+        data.append(
+            {
+                "kind": value["kind"],
+                "starts_at": starts_at.isoformat() if starts_at else None,
+                "ends_at": ends_at.isoformat() if ends_at else None,
+                "all_day": value["all_day"],
+                "status": value["status"],
+                "workspace": {
+                    "id": value["workspace_id"],
+                    "name": value["workspace_name"],
+                    "color": value["workspace_color"],
+                },
+                "resource_label": (
+                    "Resource booked" if value.get("has_resource") else None
+                ),
+            }
+        )
+    return {
+        "status": "success",
+        "data": data,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.post("/series")

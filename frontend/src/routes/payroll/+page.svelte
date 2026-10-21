@@ -7,19 +7,19 @@
   import { getToken } from "$lib/auth";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
 
-  import * as Card from "$lib/components/native/card/index.js";
-  import * as Dialog from "$lib/components/native/dialog/index.js";
-  import * as Field from "$lib/components/native/field/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
-  import * as Empty from "$lib/components/native/empty/index.js";
-  import * as Item from "$lib/components/native/item/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import { Separator } from "$lib/components/native/separator/index.js";
-  import { Skeleton } from "$lib/components/native/skeleton/index.js";
-  import { Switch } from "$lib/components/native/switch/index.js";
-  import { Label } from "$lib/components/native/label/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import * as Empty from "$lib/components/ui/empty/index.js";
+  import * as Item from "$lib/components/ui/item/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import { Separator } from "$lib/components/ui/separator/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+  import { Switch } from "$lib/components/ui/switch/index.js";
+  import { Label } from "$lib/components/ui/label/index.js";
 
   import PlusIcon from "@lucide/svelte/icons/plus";
   import SettingsIcon from "@lucide/svelte/icons/settings";
@@ -206,7 +206,7 @@
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Payroll</h1>
-      <p class="text-sm text-muted-foreground">
+      <p class="text-sm text-base-content/60">
         Generate, review, and disburse payroll per user.
       </p>
     </div>
@@ -227,7 +227,7 @@
   </div>
 
   {#if error}
-    <p class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+    <p class="rounded-md bg-error/10 p-3 text-sm text-error">
       {error}
     </p>
   {/if}
@@ -281,7 +281,7 @@
               </Item.Content>
               <Item.Actions>
                 <Badge variant={ps.variant}>{ps.label}</Badge>
-                <ChevronRightIcon class="size-4 text-muted-foreground" />
+                <ChevronRightIcon class="size-4 text-base-content/60" />
               </Item.Actions>
             </a>
           {/snippet}

@@ -19,6 +19,26 @@ ROLES = [
         "is_active": True,
     },
     {
+        "name": "Administrator",
+        "description": "System administrator with full platform administration access.",
+        "is_active": True,
+    },
+    {
+        "name": "ProjectManager",
+        "description": "Workspace supervisor responsible for projects and task coordination.",
+        "is_active": True,
+    },
+    {
+        "name": "Employee",
+        "description": "Workspace member who can view relevant work and submit assigned tasks.",
+        "is_active": True,
+    },
+    {
+        "name": "HR",
+        "description": "Global read-only directory and controlled payroll operations.",
+        "is_active": True,
+    },
+    {
         "name": "Technician",
         "description": "CRUD access to operational modules. No administrative access.",
         "is_active": True,

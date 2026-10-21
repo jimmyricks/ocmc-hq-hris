@@ -1,5 +1,5 @@
 <script lang="ts">
-  import * as Table from "$lib/components/native/table/index.js";
+  import * as Table from "$lib/components/ui/table/index.js";
 
   type LineItemRow = {
     id: string;
@@ -34,7 +34,7 @@
               <div class="flex flex-col gap-0.5">
                 <span class="font-medium">{row.taskTitle}</span>
                 {#if row.taskTypeName || row.taskKey}
-                  <span class="text-xs text-muted-foreground">
+                  <span class="text-xs text-base-content/60">
                     {row.taskTypeName ?? ""}{row.taskTypeName && row.taskKey
                       ? " · "
                       : ""}
@@ -45,7 +45,7 @@
               </div>
             </Table.Cell>
             <Table.Cell>
-              <span class="block max-w-64 truncate text-muted-foreground">
+              <span class="block max-w-64 truncate text-base-content/60">
                 {row.submissionNotes ?? "—"}
               </span>
             </Table.Cell>

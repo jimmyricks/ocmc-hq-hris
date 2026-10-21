@@ -8,5 +8,5 @@
 </script>
 
 <div class="flex h-screen items-center justify-center">
-  <p class="text-muted-foreground">Loading...</p>
+  <p class="text-base-content/60">Loading...</p>
 </div>

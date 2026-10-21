@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import * as Table from "$lib/components/native/table/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import { Spinner } from "$lib/components/native/spinner/index.js";
-  import * as Empty from "$lib/components/native/empty/index.js";
-  import * as Select from "$lib/components/native/select/index.js";
-  import { Checkbox } from "$lib/components/native/checkbox/index.js";
+  import * as Table from "$lib/components/ui/table/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import { Spinner } from "$lib/components/ui/spinner/index.js";
+  import * as Empty from "$lib/components/ui/empty/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Checkbox } from "$lib/components/ui/checkbox/index.js";
   import { apiJSON } from "$lib/api/index.js";
   import { toast } from "$lib/notifications";
   import ShieldIcon from "@lucide/svelte/icons/shield";
@@ -107,7 +107,7 @@
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Permissions</h1>
-      <p class="text-sm text-muted-foreground">
+      <p class="text-sm text-base-content/60">
         Manage role-based access control
       </p>
     </div>
@@ -163,7 +163,7 @@
                     />
                   </Table.Cell>
                   <Table.Cell class="font-mono text-sm">{perm.name}</Table.Cell>
-                  <Table.Cell class="text-sm text-muted-foreground"
+                  <Table.Cell class="text-sm text-base-content/60"
                     >{perm.description}</Table.Cell
                   >
                 </Table.Row>

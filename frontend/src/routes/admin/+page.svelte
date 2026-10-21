@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import * as Table from "$lib/components/native/table/index.js";
-  import * as Dialog from "$lib/components/native/dialog/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import { Spinner } from "$lib/components/native/spinner/index.js";
-  import * as Empty from "$lib/components/native/empty/index.js";
+  import * as Table from "$lib/components/ui/table/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import { Spinner } from "$lib/components/ui/spinner/index.js";
+  import * as Empty from "$lib/components/ui/empty/index.js";
   import { apiJSON } from "$lib/api/index.js";
   import { toast } from "$lib/notifications";
   import UsersIcon from "@lucide/svelte/icons/users";
@@ -99,7 +99,7 @@
               <Table.Row>
                 <Table.Cell>
                   <div class="font-medium">{user.full_name}</div>
-                  <div class="text-sm text-muted-foreground">
+                  <div class="text-sm text-base-content/60">
                     {user.username}
                   </div>
                 </Table.Cell>

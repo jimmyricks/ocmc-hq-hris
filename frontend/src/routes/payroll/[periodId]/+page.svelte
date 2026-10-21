@@ -14,13 +14,14 @@
   import { getToken } from "$lib/auth";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
 
-  import * as Card from "$lib/components/native/card/index.js";
-  import * as Empty from "$lib/components/native/empty/index.js";
-  import * as Item from "$lib/components/native/item/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import * as Avatar from "$lib/components/native/avatar/index.js";
-  import { Skeleton } from "$lib/components/native/skeleton/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import * as Empty from "$lib/components/ui/empty/index.js";
+  import * as Item from "$lib/components/ui/item/index.js";
+  import * as Stats from "$lib/components/ui/stat/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import * as Avatar from "$lib/components/ui/avatar/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
 
   import PlayIcon from "@lucide/svelte/icons/play";
   import BanknoteIcon from "@lucide/svelte/icons/banknote";
@@ -165,14 +166,14 @@
     variant="ghost"
     size="sm"
     onclick={() => goto("/payroll")}
-    class="gap-1.5 text-muted-foreground"
+    class="gap-1.5 text-base-content/60"
   >
     <ArrowLeftIcon class="size-4" />
     Back to periods
   </Button>
 
   {#if error}
-    <p class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+    <p class="rounded-md bg-error/10 p-3 text-sm text-error">
       {error}
     </p>
   {/if}
@@ -189,7 +190,7 @@
             {PERIOD_STATUS_META[period.status]?.label}
           </Badge>
         </div>
-        <p class="text-sm text-muted-foreground">
+        <p class="text-sm text-base-content/60">
           {formatDate(period.start_date)} → {formatDate(period.end_date)}
           {#if period.cutoff && period.cutoff !== period.end_date}
             · Cutoff: {formatDate(period.cutoff)}
@@ -208,35 +209,31 @@
     </div>
 
     <!-- Summary stats -->
-    <Item.Group class="grid grid-cols-3 gap-4">
-      <Item.Root variant="outline">
-        <Item.Media variant="icon"><UsersIcon /></Item.Media>
-        <Item.Content>
-          <Item.Description>Users</Item.Description>
-          <Item.Title class="text-2xl font-bold tabular-nums"
-            >{entries.length}</Item.Title
-          >
-        </Item.Content>
-      </Item.Root>
-      <Item.Root variant="outline">
-        <Item.Media variant="icon"><ListTodoIcon /></Item.Media>
-        <Item.Content>
-          <Item.Description>Total Tasks</Item.Description>
-          <Item.Title class="text-2xl font-bold tabular-nums"
-            >{periodTaskCount()}</Item.Title
-          >
-        </Item.Content>
-      </Item.Root>
-      <Item.Root variant="outline">
-        <Item.Media variant="icon"><DollarSignIcon /></Item.Media>
-        <Item.Content>
-          <Item.Description>Period Total</Item.Description>
-          <Item.Title class="text-2xl font-bold tabular-nums"
-            >{formatCurrency(periodTotal())}</Item.Title
-          >
-        </Item.Content>
-      </Item.Root>
-    </Item.Group>
+    <Stats.Root
+      class="w-full stats-vertical border border-base-300 bg-base-100 lg:stats-horizontal"
+    >
+      <Stats.Item>
+        <Stats.Figure class="text-primary"
+          ><UsersIcon class="size-6" /></Stats.Figure
+        >
+        <Stats.Title>Users</Stats.Title>
+        <Stats.Value class="tabular-nums">{entries.length}</Stats.Value>
+      </Stats.Item>
+      <Stats.Item>
+        <Stats.Figure class="text-primary"
+          ><ListTodoIcon class="size-6" /></Stats.Figure
+        >
+        <Stats.Title>Total Tasks</Stats.Title>
+        <Stats.Value class="tabular-nums">{periodTaskCount()}</Stats.Value>
+      </Stats.Item>
+      <Stats.Item>
+        <Stats.Figure class="text-primary"
+          ><DollarSignIcon class="size-6" /></Stats.Figure
+        >
+        <Stats.Title>Period Total</Stats.Title>
+        <Stats.Value class="tabular-nums">{formatCurrency(periodTotal())}</Stats.Value>
+      </Stats.Item>
+    </Stats.Root>
   {:else if loading}
     <Skeleton class="h-16 w-full" />
   {/if}
@@ -298,7 +295,7 @@
                   >{formatCurrency(entry.total_amount)}</span
                 >
                 <Badge variant={es.variant}>{es.label}</Badge>
-                <ChevronRightIcon class="size-4 text-muted-foreground" />
+                <ChevronRightIcon class="size-4 text-base-content/60" />
               </Item.Actions>
             </a>
           {/snippet}

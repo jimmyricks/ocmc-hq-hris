@@ -15,13 +15,13 @@
   import { getToken } from "$lib/auth";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
 
-  import * as Card from "$lib/components/native/card/index.js";
-  import * as Empty from "$lib/components/native/empty/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Badge } from "$lib/components/native/badge/index.js";
-  import * as Avatar from "$lib/components/native/avatar/index.js";
-  import { Separator } from "$lib/components/native/separator/index.js";
-  import { Skeleton } from "$lib/components/native/skeleton/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import * as Empty from "$lib/components/ui/empty/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import * as Avatar from "$lib/components/ui/avatar/index.js";
+  import { Separator } from "$lib/components/ui/separator/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import DataTable from "./data-table.svelte";
 
   import CheckIcon from "@lucide/svelte/icons/check";
@@ -203,14 +203,14 @@
     variant="ghost"
     size="sm"
     onclick={() => goto(`/payroll/${periodId}`)}
-    class="gap-1.5 text-muted-foreground"
+    class="gap-1.5 text-base-content/60"
   >
     <ArrowLeftIcon class="size-4" />
     Back to {period?.label ?? "period"}
   </Button>
 
   {#if error}
-    <p class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+    <p class="rounded-md bg-error/10 p-3 text-sm text-error">
       {error}
     </p>
   {/if}
@@ -233,7 +233,7 @@
             </h1>
             <Badge variant={es.variant}>{es.label}</Badge>
           </div>
-          <p class="text-sm text-muted-foreground">
+          <p class="text-sm text-base-content/60">
             {entry.total_tasks ?? 0}
             {(entry.total_tasks ?? 0) === 1 ? "task" : "tasks"}
             · {formatCurrency(entry.total_amount)}
@@ -287,7 +287,7 @@
               <CheckIcon class="size-4" />
               Approve Entry
             </Button>
-            <p class="text-xs text-muted-foreground">
+            <p class="text-xs text-base-content/60">
               Approving will verify this entry. All included tasks are already
               closed.
             </p>
@@ -296,15 +296,15 @@
               <BanknoteIcon class="size-4" />
               Disburse Payment
             </Button>
-            <p class="text-xs text-muted-foreground">
+            <p class="text-xs text-base-content/60">
               Paying will write a ledger debit and notify the user.
             </p>
           {:else if entry.status === "paid"}
             <div
-              class="flex items-center gap-1.5 text-sm text-muted-foreground"
+              class="flex items-center gap-1.5 text-sm text-base-content/60"
             >
               <CheckIcon
-                class="size-4 text-emerald-600 dark:text-emerald-400"
+                class="size-4 text-success"
               />
               Payment disbursed
               {#if entry.approved_at}

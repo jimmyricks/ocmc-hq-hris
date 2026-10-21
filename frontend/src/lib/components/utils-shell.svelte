@@ -2,7 +2,7 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { type Snippet } from "svelte";
-  import * as Tabs from "$lib/components/native/tabs/index.js";
+  import * as Tabs from "$lib/components/ui/tabs/index.js";
 
   let { children }: { children?: Snippet } = $props();
   let active = $derived(page.url.pathname === "/utils/qr" ? "qr" : "links");

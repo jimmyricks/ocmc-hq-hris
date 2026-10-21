@@ -16,6 +16,7 @@ from app.application.services.access_control.rbac_service import RBACAppService
 from app.application.services.access_control.row_scope_service import RowScopeService
 from app.infrastructure.database.repositories.entity_repository import get_entity_model
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.modules.workspaces.services import WorkspaceService
 
 router = APIRouter()
 
@@ -32,6 +33,8 @@ async def get_audit_trail(
     rbac: RBACAppService = Depends(get_rbac_service),
 ):
     """Get audit trail for a specific entity record."""
+    if not WorkspaceService.is_system_admin(user.roles, user.is_superuser):
+        raise ForbiddenError("Only system administrators may view audit trails")
     has_permission = await rbac.check_permission(
         user.id,
         entity,

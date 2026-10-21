@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import uuid4
 
@@ -44,6 +44,7 @@ class LegacyMappingRequest(BaseModel):
     entity: str
     record_id: str
     workspace_id: str
+    task_type_id: str | None = None
 
 
 def _workspace_dict(workspace: Workspace) -> dict:
@@ -58,8 +59,29 @@ def _workspace_dict(workspace: Workspace) -> dict:
 
 
 def _require_admin(current_user: CurrentUser) -> None:
-    if not WorkspaceService.is_admin(current_user.roles, current_user.is_superuser):
+    if not WorkspaceService.is_system_admin(current_user.roles, current_user.is_superuser):
         raise ForbiddenError("Only HQ administrators can manage workspaces")
+
+
+def _capabilities(
+    current_user: CurrentUser,
+    active_role: str | None,
+    has_supervisor_membership: bool,
+) -> dict[str, bool]:
+    is_system_admin = WorkspaceService.is_system_admin(
+        current_user.roles, current_user.is_superuser
+    )
+    return {
+        "can_view_all_workspaces": is_system_admin,
+        "can_manage_active_workspace": is_system_admin or active_role == "supervisor",
+        "can_manage_payroll": WorkspaceService.is_payroll_admin(
+            current_user.roles, current_user.is_superuser
+        ),
+        "can_view_global_schedule": is_system_admin or has_supervisor_membership,
+        "can_view_hr_directory": is_system_admin
+        or WorkspaceService.is_hr(current_user.roles),
+        "is_system_admin": is_system_admin,
+    }
 
 
 @router.get("")
@@ -67,6 +89,12 @@ async def list_workspaces(
     current_user: CurrentUser = Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await WorkspaceService.resolve_context(
+        db,
+        current_user.id,
+        current_user.roles,
+        current_user.is_superuser,
+    )
     workspaces = await WorkspaceService.visible_workspaces(
         db, current_user.id, current_user.roles, current_user.is_superuser
     )
@@ -105,10 +133,21 @@ async def get_workspace_context(
     }
     active_membership = memberships_by_workspace.get(context.active_workspace_id)
     active_role = active_membership.membership_role if active_membership else None
-    is_admin = WorkspaceService.is_admin(
-        current_user.roles, current_user.is_superuser
+    capabilities = _capabilities(
+        current_user,
+        active_role,
+        any(item.membership_role == "supervisor" for item in memberships),
     )
-    can_manage = is_admin or active_role == "supervisor"
+    is_admin = capabilities["is_system_admin"]
+    manageable_workspaces = [
+        _workspace_dict(workspace)
+        for workspace in workspaces
+        if capabilities["is_system_admin"]
+        or (
+            memberships_by_workspace.get(workspace.id)
+            and memberships_by_workspace[workspace.id].membership_role == "supervisor"
+        )
+    ]
     return {
         "status": "success",
         "data": {
@@ -122,14 +161,9 @@ async def get_workspace_context(
                 None,
             ),
             "is_global": context.is_global,
-            "can_manage": can_manage,
-            "capabilities": {
-                "can_view_all_workspaces": context.is_global,
-                "can_manage_active_workspace": can_manage,
-                "can_manage_payroll": WorkspaceService.is_payroll_admin(
-                    current_user.roles, current_user.is_superuser
-                ),
-            },
+            "can_manage": capabilities["can_manage_active_workspace"],
+            "capabilities": capabilities,
+            "manageable_workspaces": manageable_workspaces,
             "workspaces": [
                 {
                     **_workspace_dict(workspace),
@@ -168,7 +202,10 @@ async def list_project_user_directory(
         current_user.is_superuser,
         workspace_id,
     )
-    if not WorkspaceService.is_admin(current_user.roles, current_user.is_superuser):
+    is_system_admin = WorkspaceService.is_system_admin(
+        current_user.roles, current_user.is_superuser
+    )
+    if not is_system_admin:
         if not context.active_workspace_id:
             raise ForbiddenError("Select an assigned workspace first")
         role = await db.scalar(
@@ -180,10 +217,60 @@ async def list_project_user_directory(
         )
         if role != "supervisor":
             raise ForbiddenError("Only workspace supervisors can browse the project directory")
+        user_query = (
+            select(User)
+            .join(WorkspaceMembership, WorkspaceMembership.user_id == User.id)
+            .where(
+                WorkspaceMembership.workspace_id == context.active_workspace_id,
+                WorkspaceMembership.is_active.is_(True),
+                User.is_active.is_(True),
+            )
+        )
+    else:
+        user_query = select(User).where(User.is_active.is_(True))
+    users = await db.scalars(user_query.order_by(User.full_name, User.username))
+    return {
+        "status": "success",
+        "data": [
+            {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_active": user.is_active,
+            }
+            for user in users
+        ],
+    }
+
+
+@router.get("/hr-directory")
+async def list_hr_user_directory(
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = 1,
+    page_size: int = 50,
+    search: str | None = None,
+):
+    is_system_admin = WorkspaceService.is_system_admin(
+        current_user.roles, current_user.is_superuser
+    )
+    if not is_system_admin and not WorkspaceService.is_hr(current_user.roles):
+        raise ForbiddenError("Only HR may view the global user directory")
+    page_size = min(max(page_size, 1), 100)
+    query = select(User).where(User.is_active.is_(True))
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.where(
+            User.full_name.ilike(pattern)
+            | User.username.ilike(pattern)
+            | User.email.ilike(pattern)
+        )
+    total = await db.scalar(select(func.count()).select_from(query.subquery()))
     users = await db.scalars(
-        select(User)
-        .where(User.is_active.is_(True))
-        .order_by(User.full_name, User.username)
+        query.order_by(User.full_name, User.username)
+        .offset((max(page, 1) - 1) * page_size)
+        .limit(page_size)
     )
     return {
         "status": "success",
@@ -197,6 +284,9 @@ async def list_project_user_directory(
             }
             for user in users
         ],
+        "total": total,
+        "page": max(page, 1),
+        "page_size": page_size,
     }
 
 
@@ -225,6 +315,38 @@ async def select_workspace_context(
         and not WorkspaceService.is_admin(current_user.roles, current_user.is_superuser)
         else None
     )
+    memberships = (
+        await db.scalars(
+            select(WorkspaceMembership)
+            .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
+            .where(
+                WorkspaceMembership.user_id == current_user.id,
+                WorkspaceMembership.is_active.is_(True),
+                Workspace.is_active.is_(True),
+            )
+        )
+    ).all()
+    memberships_by_workspace = {
+        membership.workspace_id: membership for membership in memberships
+    }
+    workspaces = await WorkspaceService.visible_workspaces(
+        db, current_user.id, current_user.roles, current_user.is_superuser
+    )
+    capabilities = _capabilities(
+        current_user,
+        active_role,
+        any(item.membership_role == "supervisor" for item in memberships),
+    )
+    is_admin = capabilities["is_system_admin"]
+    manageable_workspaces = [
+        _workspace_dict(workspace)
+        for workspace in workspaces
+        if capabilities["is_system_admin"]
+        or (
+            memberships_by_workspace.get(workspace.id)
+            and memberships_by_workspace[workspace.id].membership_role == "supervisor"
+        )
+    ]
     return {
         "status": "success",
         "data": {
@@ -242,20 +364,9 @@ async def select_workspace_context(
                 )
             ),
             "is_global": context.is_global,
-            "can_manage": WorkspaceService.is_admin(
-                current_user.roles, current_user.is_superuser
-            )
-            or active_role == "supervisor",
-            "capabilities": {
-                "can_view_all_workspaces": context.is_global,
-                "can_manage_active_workspace": WorkspaceService.is_admin(
-                    current_user.roles, current_user.is_superuser
-                )
-                or active_role == "supervisor",
-                "can_manage_payroll": WorkspaceService.is_payroll_admin(
-                    current_user.roles, current_user.is_superuser
-                ),
-            },
+            "can_manage": capabilities["can_manage_active_workspace"],
+            "capabilities": capabilities,
+            "manageable_workspaces": manageable_workspaces,
         },
     }
 
@@ -375,6 +486,25 @@ async def list_unmapped_records(
             select(TaskType).where(TaskType.workspace_id.is_(None)).order_by(TaskType.name)
         )
     ).all()
+    tasks = (
+        await db.execute(
+            select(Task, Project, TaskType)
+            .outerjoin(Project, Project.id == Task.project_id)
+            .outerjoin(TaskType, TaskType.id == Task.task_type_id)
+            .where(
+                (Task.workspace_id.is_(None))
+                | (Task.workspace_id != Project.workspace_id)
+                | (
+                    Task.task_type_id.is_not(None)
+                    & (
+                        TaskType.workspace_id.is_(None)
+                        | (TaskType.workspace_id != Project.workspace_id)
+                    )
+                )
+            )
+            .order_by(Task.title, Task.id)
+        )
+    ).all()
     return {
         "status": "success",
         "data": {
@@ -387,6 +517,20 @@ async def list_unmapped_records(
                     "unit": row.unit,
                 }
                 for row in task_types
+            ],
+            "tasks": [
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "project_id": task.project_id,
+                    "project_workspace_id": project.workspace_id if project else None,
+                    "task_type_id": task.task_type_id,
+                    "task_type_workspace_id": (
+                        task_type.workspace_id if task_type else None
+                    ),
+                    "workspace_id": task.workspace_id,
+                }
+                for task, project, task_type in tasks
             ],
         },
     }
@@ -406,21 +550,35 @@ async def map_legacy_record(
     models = {
         "project": Project,
         "task_type": TaskType,
+        "task": Task,
     }
     model = models.get(payload.entity)
     if not model:
-        raise BadRequestError("Only projects and task types can be mapped")
+        raise BadRequestError("Only projects, task types, and tasks can be mapped")
     record = await db.get(model, payload.record_id)
     if not record:
         raise NotFoundError(payload.entity, payload.record_id)
-    if record.workspace_id:
+    if payload.entity == "task":
+        project = await db.get(Project, record.project_id)
+        task_type_id = payload.task_type_id or record.task_type_id
+        task_type = await db.get(TaskType, task_type_id) if task_type_id else None
+        if not project or project.workspace_id != workspace.id:
+            raise ConflictError("Task project must belong to the selected workspace")
+        if task_type_id and (
+            not task_type or task_type.workspace_id != workspace.id
+        ):
+            raise ConflictError(
+                "Task type must belong to the selected workspace"
+            )
+        if record.workspace_id == workspace.id and record.task_type_id == task_type_id:
+            raise ConflictError("This task already belongs to the selected workspace")
+    elif record.workspace_id == workspace.id:
         raise ConflictError("This record already belongs to a workspace")
-
-    if payload.entity == "project":
+    elif payload.entity == "project":
         task_types = await db.scalars(
             select(TaskType)
             .join(Task, Task.task_type_id == TaskType.id)
-            .where(Task.project_id == record.id, TaskType.workspace_id.is_not(None))
+            .where(Task.project_id == record.id)
         )
         if any(task_type.workspace_id != workspace.id for task_type in task_types):
             raise ConflictError(
@@ -443,7 +601,48 @@ async def map_legacy_record(
 
     old_values = record_to_dict(record)
     record.workspace_id = workspace.id
+    if payload.entity == "task" and payload.task_type_id:
+        record.task_type_id = payload.task_type_id
     record.last_modified_by = current_user.id
+    await db.flush()
+
+    if payload.entity == "project":
+        tasks = await db.scalars(select(Task).where(Task.project_id == record.id))
+        for task in tasks:
+            task_old_values = record_to_dict(task)
+            task.workspace_id = workspace.id
+            task.last_modified_by = current_user.id
+            await AuditLogService.log_event(
+                db,
+                entity="task",
+                record_id=task.id,
+                action="update",
+                actor_id=current_user.id,
+                old_values=task_old_values,
+                new_values=record_to_dict(task),
+            )
+    elif payload.entity == "task_type":
+        tasks = await db.scalars(
+            select(Task)
+            .join(Project, Project.id == Task.project_id)
+            .where(
+                Task.task_type_id == record.id,
+                Project.workspace_id == workspace.id,
+            )
+        )
+        for task in tasks:
+            task_old_values = record_to_dict(task)
+            task.workspace_id = workspace.id
+            task.last_modified_by = current_user.id
+            await AuditLogService.log_event(
+                db,
+                entity="task",
+                record_id=task.id,
+                action="update",
+                actor_id=current_user.id,
+                old_values=task_old_values,
+                new_values=record_to_dict(task),
+            )
     await AuditLogService.log_event(
         db,
         entity=payload.entity,

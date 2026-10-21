@@ -48,6 +48,7 @@ export interface Project {
 	status?: ProjectStatus;
 	start_date?: string;
 	end_date?: string;
+	is_continuous?: boolean;
 	created_at?: string;
 	updated_at?: string;
 }
@@ -102,8 +103,6 @@ export interface Task {
 	task_key?: string;
 	created_by?: string;
 	due_date?: string;
-	planned_start_at?: string;
-	planned_end_at?: string;
 	links?: TaskLink[];
 	created_at?: string;
 	updated_at?: string;

@@ -11,7 +11,11 @@ from sqlalchemy.orm import selectinload
 from pydantic import ValidationError
 
 from app.core.database import get_db
-from app.core.security import get_current_user_from_token, CurrentUser
+from app.core.security import (
+    get_current_user_from_token,
+    CurrentUser,
+    is_system_admin_user,
+)
 from app.core.framework.models.auth import User, Role
 from app.schemas.role import RoleCreate, RoleUpdate
 from app.schemas.base import ActionResponse
@@ -23,7 +27,7 @@ router = APIRouter(tags=["admin-roles"])
 @router.get("/meta/role")
 async def get_role_metadata(current_user: CurrentUser = Depends(get_current_user_from_token)):
     """Get metadata for Role entity."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Superuser access required")
     
     return api_response(
@@ -69,7 +73,7 @@ async def list_roles(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """List all roles with their permissions."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(
@@ -111,7 +115,7 @@ async def create_role(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Create a new role."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     try:
@@ -167,7 +171,7 @@ async def update_role(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Update a role."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(select(Role).where(Role.id == role_id))
@@ -176,7 +180,7 @@ async def update_role(
     if not role:
         return api_response(status="error", message="Role not found")
     
-    if role.name == "SystemManager":
+    if role.name in {"SystemManager", "Administrator"}:
         return api_response(
             status="error",
             message="Cannot modify SystemManager role"
@@ -232,7 +236,7 @@ async def delete_role(
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
     """Delete a role."""
-    if not (current_user.is_superuser or "SystemManager" in (current_user.roles or [])):
+    if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
     
     result = await db.execute(select(Role).where(Role.id == role_id))
@@ -241,7 +245,7 @@ async def delete_role(
     if not role:
         return api_response(status="error", message="Role not found")
     
-    if role.name == "SystemManager":
+    if role.name in {"SystemManager", "Administrator"}:
         return api_response(
             status="error",
             message="Cannot delete SystemManager role"

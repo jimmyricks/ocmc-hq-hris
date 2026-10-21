@@ -21,3 +21,7 @@ class PermissionRepositoryProtocol(Protocol):
     ) -> list[Any]:
         """Fetch all entity permissions for the supplied role IDs."""
         ...
+
+    async def get_role_names(self, role_ids: list[str]) -> list[str]:
+        """Fetch role names for the supplied role IDs."""
+        ...

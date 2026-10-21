@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.framework.models.infrastructure import Comment
-from app.core.security import CurrentUser, require_authenticated_user
+from app.core.security import (
+    CurrentUser,
+    is_system_admin_user,
+    require_authenticated_user,
+)
 from app.application.services.access_control.rbac_service import RBACAppService
 from app.application.services.access_control.row_scope_service import RowScopeService
 from app.api.dependencies import get_rbac_service, get_row_scope_service
@@ -193,7 +197,7 @@ async def delete_comment(
         raise HTTPException(status_code=404, detail="Comment not found")
     await _ensure_record_access(entity, record_id, current_user, db, row_scope)
 
-    is_admin = current_user.is_superuser or "Administrator" in current_user.roles
+    is_admin = is_system_admin_user(current_user)
     if comment.author_id != current_user.id and not is_admin:
         raise HTTPException(status_code=403, detail="Permission denied")
 

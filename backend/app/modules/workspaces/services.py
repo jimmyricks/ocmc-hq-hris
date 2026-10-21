@@ -39,6 +39,7 @@ WORKSPACE_DEFAULTS = (
 )
 
 ADMIN_ROLES = {"Administrator", "SystemManager"}
+HR_ROLES = {"HR"}
 
 
 @dataclass(frozen=True)
@@ -50,13 +51,21 @@ class WorkspaceContext:
 
 class WorkspaceService:
     @staticmethod
-    def is_admin(roles: list[str], is_superuser: bool) -> bool:
+    def is_system_admin(roles: list[str], is_superuser: bool) -> bool:
         return is_superuser or bool(ADMIN_ROLES.intersection(roles or []))
 
     @staticmethod
+    def is_admin(roles: list[str], is_superuser: bool) -> bool:
+        return WorkspaceService.is_system_admin(roles, is_superuser)
+
+    @staticmethod
+    def is_hr(roles: list[str]) -> bool:
+        return bool(HR_ROLES.intersection(roles or []))
+
+    @staticmethod
     def is_payroll_admin(roles: list[str], is_superuser: bool) -> bool:
-        return WorkspaceService.is_admin(roles, is_superuser) or "HR" in (
-            roles or []
+        return WorkspaceService.is_system_admin(roles, is_superuser) or WorkspaceService.is_hr(
+            roles
         )
 
     @staticmethod
@@ -102,13 +111,19 @@ class WorkspaceService:
         is_superuser: bool,
         requested_workspace_id: str | None = None,
     ) -> WorkspaceContext:
-        if WorkspaceService.is_admin(roles, is_superuser):
+        if WorkspaceService.is_system_admin(roles, is_superuser):
             if not requested_workspace_id or requested_workspace_id == "all":
                 return WorkspaceContext((), None, is_global=True)
             workspace = await db.get(Workspace, requested_workspace_id)
             if not workspace or not workspace.is_active:
                 raise NotFoundError("Workspace", requested_workspace_id)
             return WorkspaceContext((workspace.id,), workspace.id)
+
+        if WorkspaceService.is_hr(roles):
+            return WorkspaceContext((), None)
+
+        if requested_workspace_id == "all":
+            raise ForbiddenError("Only system administrators can select all workspaces")
 
         result = await db.execute(
             select(WorkspaceMembership, Workspace)
@@ -127,11 +142,8 @@ class WorkspaceService:
             (membership for membership, _ in memberships if membership.is_home),
             None,
         )
-        supervisor_ids = {
-            membership.workspace_id
-            for membership, _ in memberships
-            if membership.membership_role == "supervisor"
-        }
+        if not home:
+            raise ForbiddenError("An active home workspace has not been assigned")
 
         if requested_workspace_id:
             matching = next(
@@ -144,22 +156,11 @@ class WorkspaceService:
             )
             if matching is None:
                 raise ForbiddenError("You are not assigned to this workspace")
-            if matching.membership_role != "supervisor" and matching.workspace_id != (
-                home.workspace_id if home else None
-            ):
+            if matching.membership_role != "supervisor" and matching.id != home.id:
                 raise ForbiddenError("Members cannot switch their home workspace")
             return WorkspaceContext((matching.workspace_id,), matching.workspace_id)
 
-        if home and home.membership_role != "supervisor":
-            return WorkspaceContext((home.workspace_id,), home.workspace_id)
-        if home and home.workspace_id in supervisor_ids:
-            return WorkspaceContext((home.workspace_id,), home.workspace_id)
-        if len(supervisor_ids) == 1:
-            workspace_id = next(iter(supervisor_ids))
-            return WorkspaceContext((workspace_id,), workspace_id)
-        if len(supervisor_ids) > 1:
-            raise BadRequestError("Select one of your assigned supervisor workspaces")
-        raise ForbiddenError("A home workspace has not been assigned")
+        return WorkspaceContext((home.workspace_id,), home.workspace_id)
 
     @staticmethod
     async def visible_workspaces(

@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.base_model import BaseModel
 
@@ -7,6 +7,9 @@ from app.core.base_model import BaseModel
 class Invoice(BaseModel):
     """Invoice entity model."""
     __tablename__ = "invoice"
+    __table_args__ = (
+        UniqueConstraint("payroll_entry_id", name="uq_invoice_payroll_entry_id"),
+    )
     
     invoice_number: Mapped[str] = mapped_column(String(255), nullable=True, default=None)
     payroll_entry_id: Mapped[str] = mapped_column(String(50), ForeignKey("payroll_entry.id"), nullable=True, default=None)

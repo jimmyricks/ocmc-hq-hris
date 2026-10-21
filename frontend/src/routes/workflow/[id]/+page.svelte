@@ -2,10 +2,10 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
-  import * as Field from "$lib/components/native/field/index.js";
-  import { Button } from "$lib/components/native/button/index.js";
-  import { Input } from "$lib/components/native/input/index.js";
-  import { Switch } from "$lib/components/native/switch/index.js";
+  import * as Field from "$lib/components/ui/field/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Switch } from "$lib/components/ui/switch/index.js";
   import { apiJSON } from "$lib/api/index.js";
   import { toast } from "$lib/notifications";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
@@ -181,9 +181,9 @@
     gap: 16px;
   }
   .workflow-panel {
-    border: 1px solid var(--border);
+    border: 1px solid var(--color-base-300);
     border-radius: 10px;
-    background: var(--card);
+    background: var(--color-base-100);
     padding: 18px;
   }
   .workflow-panel h2 {
@@ -200,20 +200,20 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--color-base-300);
     border-radius: 999px;
-    background: #fff;
+    background: var(--color-base-100);
     padding: 8px 12px;
     font-size: 12px;
     font-weight: 650;
   }
   .workflow-state.is-initial {
-    border-color: #9bb5f5;
-    background: #edf2ff;
-    color: #2457d6;
+    border-color: color-mix(in oklab, var(--color-primary) 30%, var(--color-base-100));
+    background: color-mix(in oklab, var(--color-primary) 10%, var(--color-base-100));
+    color: var(--color-primary);
   }
   .workflow-state small {
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
@@ -227,25 +227,25 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--color-base-300);
     border-radius: 9px;
     padding: 10px 12px;
     font-size: 12px;
   }
   .workflow-action {
     border-radius: 999px;
-    background: var(--secondary);
+    background: var(--color-base-200);
     padding: 4px 8px;
-    color: var(--secondary-foreground);
+    color: var(--color-base-content);
     font-size: 11px;
     font-weight: 750;
   }
   .workflow-transition small {
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
   }
   .workflow-empty {
     margin: 0;
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
     font-size: 12px;
   }
 </style>
