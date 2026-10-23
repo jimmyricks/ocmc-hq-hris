@@ -7,11 +7,17 @@
   } from "$lib/payroll/types.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import PencilIcon from "@lucide/svelte/icons/pencil";
 
+  const appState = useAppState();
   let rates = $state<UserTaskRate[]>([]);
+  let ratesPage = $state(appState.tablePage("employee-rates"));
+  let ratesPageSize = $state(25);
+  let ratesTotal = $state(0);
   let options = $state<EmployeeRateOptions>({
     workspaces: [],
     users: [],
@@ -28,6 +34,8 @@
   let saving = $state(false);
   let error = $state("");
   let filter = $state("");
+  let appliedFilter = $state("");
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
   let editorOpen = $state(false);
   let editingId = $state<string | null>(null);
   let workspaceId = $state("");
@@ -35,20 +43,6 @@
   let taskTypeId = $state("");
   let rateValue = $state("");
 
-  const visibleRates = $derived(
-    rates.filter((rate) => {
-      const search = filter.trim().toLowerCase();
-      if (!search) return true;
-      return [
-        workspaceName(rate.workspace_id),
-        userName(rate.user_id),
-        taskTypeName(rate.task_type_id),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(search);
-    }),
-  );
   const availableUsers = $derived(
     options.users.filter((user) => user.workspace_ids.includes(workspaceId)),
   );
@@ -59,27 +53,61 @@
   );
 
   onMount(() => {
-    void load();
+    void loadRates(ratesPage);
+    void loadReferenceData();
+    return () => clearTimeout(filterTimer);
   });
 
-  async function load() {
-    loading = true;
-    error = "";
+  async function loadReferenceData() {
     try {
-      const [rateRows, choices, payrollSummary] = await Promise.all([
-        payrollApi.getEmployeeRates(),
+      const [choices, payrollSummary] = await Promise.all([
         payrollApi.getEmployeeRateOptions(),
         payrollApi.getHrSummary(),
       ]);
-      rates = rateRows;
       options = choices;
       summary = payrollSummary;
+    } catch (err) {
+      error =
+        err instanceof Error ? err.message : "Could not load rate options";
+    }
+  }
+
+  async function loadRates(page = ratesPage) {
+    loading = true;
+    error = "";
+    try {
+      const result = await payrollApi.getEmployeeRatesPage(
+        page,
+        ratesPageSize,
+        appliedFilter,
+      );
+      if (!result.items.length && result.total > 0 && page > 1) {
+        return loadRates(Math.ceil(result.total / ratesPageSize));
+      }
+      rates = result.items;
+      ratesTotal = result.total;
+      ratesPage = result.page;
+      appState.rememberTablePage("employee-rates", ratesPage);
     } catch (err) {
       error =
         err instanceof Error ? err.message : "Could not load employee rates";
     } finally {
       loading = false;
     }
+  }
+
+  function setRatesPage(page: number) {
+    ratesPage = page;
+    appState.rememberTablePage("employee-rates", page);
+    void loadRates(page);
+  }
+
+  function queueSearch() {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      appliedFilter = filter.trim();
+      setRatesPage(1);
+    }, 300);
   }
 
   function workspaceName(id: string) {
@@ -144,7 +172,7 @@
         editingId ?? undefined,
       );
       editorOpen = false;
-      await load();
+      await loadRates(ratesPage);
     } catch (err) {
       error =
         err instanceof Error ? err.message : "Could not save employee rate";
@@ -163,7 +191,7 @@
     }
     try {
       await payrollApi.deleteEmployeeRate(record.id);
-      await load();
+      await loadRates(ratesPage);
     } catch (err) {
       error =
         err instanceof Error ? err.message : "Could not delete employee rate";
@@ -182,19 +210,21 @@
 <main class="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 md:p-8">
   <header class="flex flex-wrap items-end justify-between gap-4">
     <div>
-      <p class="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+      <p
+        class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60"
+      >
         Payroll setup
       </p>
-      <h1 class="mt-2 text-3xl font-bold tracking-tight">
+      <h1 class="mt-2 text-2xl font-bold tracking-tight">
         Employee rate overrides
       </h1>
-      <p class="mt-2 max-w-2xl text-sm text-base-content/65">
+      <p class="mt-1 max-w-2xl text-sm text-base-content/60">
         Overrides apply to one employee, task type, and workspace. Approved
         submissions keep the exact rate and amount captured at approval.
       </p>
     </div>
     <div class="flex gap-2">
-      <a class="btn btn-ghost btn-sm" href="/payroll/tasks-rates"
+      <a class="btn btn-outline btn-sm" href="/payroll/tasks-rates"
         >Task type defaults</a
       >
       <Button variant="primary" onclick={openCreate}>
@@ -268,6 +298,7 @@
         class="w-full sm:max-w-xs"
         placeholder="Search employees, tasks, workspaces"
         aria-label="Search employee rates"
+        oninput={queueSearch}
       />
     </div>
 
@@ -278,7 +309,7 @@
       >
         Loading payroll rates…
       </div>
-    {:else if visibleRates.length === 0}
+    {:else if rates.length === 0}
       <div class="p-8 text-center">
         <p class="font-medium">No employee overrides found</p>
         <p class="mt-1 text-sm text-base-content/60">
@@ -299,7 +330,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each visibleRates as record (record.id)}
+            {#each rates as record (record.id)}
               <tr>
                 <td class="font-medium">{userName(record.user_id)}</td>
                 <td>{workspaceName(record.workspace_id)}</td>
@@ -334,11 +365,18 @@
           </tbody>
         </table>
       </div>
-      <footer
-        class="border-t border-base-300 px-4 py-3 text-xs text-base-content/60"
-      >
-        Showing {visibleRates.length} of {rates.length} employee overrides
-      </footer>
+      <Pagination
+        page={ratesPage}
+        pageSize={ratesPageSize}
+        total={ratesTotal}
+        {loading}
+        pageSizeOptions={[10, 25, 50, 100]}
+        onchange={setRatesPage}
+        onpagesizechange={(size) => {
+          ratesPageSize = size;
+          setRatesPage(1);
+        }}
+      />
     {/if}
   </section>
 </main>

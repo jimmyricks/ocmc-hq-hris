@@ -307,18 +307,25 @@ async def _create_entity(
             data["id"] = str(uuid.uuid4())
 
     # Auto-fill workflow_state from entity metadata when not provided
-    if (
-        meta.workflow and meta.workflow.enabled
-        and data.get("workflow_state") in (None, "")
-        and meta.workflow.initial_state
-    ):
-        data["workflow_state"] = meta.workflow.initial_state
+    if meta.workflow and meta.workflow.enabled and data.get("workflow_state") in (None, ""):
+        try:
+            initial_state = await workflow_service.get_initial_state(
+                entity, workspace_id=data.get("workspace_id")
+            )
+            if initial_state:
+                data["workflow_state"] = initial_state
+        except Exception:
+            pass
+        if not data.get("workflow_state") and meta.workflow.initial_state:
+            data["workflow_state"] = meta.workflow.initial_state
 
     # If workflow is disabled in JSON but the table enforces NOT NULL on workflow_state,
     # fall back to DB workflow initial state when available.
     if data.get("workflow_state") in (None, "") and hasattr(model, "workflow_state"):
         try:
-            initial_state = await workflow_service.get_initial_state(entity)
+            initial_state = await workflow_service.get_initial_state(
+                entity, workspace_id=data.get("workspace_id")
+            )
             if initial_state:
                 data["workflow_state"] = initial_state
         except Exception:

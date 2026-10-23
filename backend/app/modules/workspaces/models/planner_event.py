@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -26,3 +26,6 @@ class PlannerEvent(BaseModel):
     ends_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
     all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    artist_portal_visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )

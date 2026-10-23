@@ -1,10 +1,7 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { browser } from "$app/environment";
   import logo from "$lib/assets/OCMClogo.png";
-  import { getToken, getUser } from "$lib/auth";
-  import { workspaceApi } from "$lib/workspaces/api";
-  import type { WorkspaceContext } from "$lib/workspaces/types";
+  import { useAppState } from "$lib/app-state.svelte.js";
   import NavProjects from "./nav-projects.svelte";
   import NavUser from "./nav-user.svelte";
 
@@ -16,6 +13,7 @@
   import Link2Icon from "@lucide/svelte/icons/link-2";
   import QrCodeIcon from "@lucide/svelte/icons/qr-code";
   import ClipboardListIcon from "@lucide/svelte/icons/clipboard-list";
+  import ReceiptTextIcon from "@lucide/svelte/icons/receipt-text";
   import Settings2Icon from "@lucide/svelte/icons/settings-2";
   import XIcon from "@lucide/svelte/icons/x";
 
@@ -29,7 +27,13 @@
     { title: "Overview", url: "/dashboard", icon: LayoutDashboardIcon },
     { title: "Planner", url: "/planner", icon: CalendarDaysIcon },
     { title: "My tasks", url: "/tasks/my", icon: CheckSquareIcon },
+    { title: "My invoices", url: "/payroll/invoices", icon: ReceiptTextIcon },
   ];
+  const workflowItem = {
+    title: "Workflows",
+    url: "/workflow",
+    icon: Settings2Icon,
+  };
 
   const operationsItems = [
     { title: "Payroll", url: "/payroll", icon: BanknoteIcon },
@@ -50,11 +54,11 @@
     { title: "Audit & ledger", url: "/audit", icon: ClipboardListIcon },
     { title: "Admin", url: "/admin", icon: Settings2Icon },
     { title: "Permissions", url: "/admin/permissions", icon: Settings2Icon },
-    { title: "Workflows", url: "/workflow", icon: Settings2Icon },
   ];
 
-  let workspaceContext = $state<WorkspaceContext | null>(null);
-  const user = $derived(browser ? getUser() : null);
+  const appState = useAppState();
+  const workspaceContext = $derived(appState.workspaceContext);
+  const user = $derived(appState.user);
   const isSystemAdmin = $derived(
     workspaceContext?.capabilities?.is_system_admin ??
       Boolean(
@@ -75,6 +79,17 @@
   );
   const visiblePeopleItems = $derived(canViewHRDirectory ? peopleItems : []);
   const visibleAdminItems = $derived(isSystemAdmin ? adminItems : []);
+  const canManageWorkspace = $derived(
+    Boolean(
+      workspaceContext?.capabilities?.can_manage_active_workspace ||
+        workspaceContext?.can_manage,
+    ),
+  );
+  const visibleWorkspaceItems = $derived(
+    canManageWorkspace || isSystemAdmin
+      ? [...workspaceItems, workflowItem]
+      : workspaceItems,
+  );
   const activeWorkspaceLabel = $derived(
     workspaceContext?.workspaces.find(
       (workspace) => workspace.id === workspaceContext?.active_workspace_id,
@@ -86,23 +101,16 @@
           : "Workspace"),
   );
 
-  $effect(() => {
-    if (!browser || !getToken() || workspaceContext) return;
-    workspaceApi
-      .getContext()
-      .then((context) => (workspaceContext = context))
-      .catch((error) =>
-        console.error("Failed to load workspace context:", error),
-      );
-  });
-
   function isActive(url: string) {
+    if (url === "/payroll/invoices")
+      return page.url.pathname === "/payroll/invoices";
     if (url === "/payroll/tasks-rates") return page.url.pathname === url;
     if (url === "/payroll")
       return (
         page.url.pathname === "/payroll" ||
         (page.url.pathname.startsWith("/payroll/") &&
-          !page.url.pathname.startsWith("/payroll/tasks-rates"))
+          !page.url.pathname.startsWith("/payroll/tasks-rates") &&
+          !page.url.pathname.startsWith("/payroll/invoices"))
       );
     if (url === "/workflow") {
       return (
@@ -118,10 +126,10 @@
 </script>
 
 <aside
-  class="flex min-h-full w-60 flex-col border-r border-base-300 bg-base-100 p-4"
+  class="flex h-dvh w-60 flex-col border-r border-base-300 bg-base-100 p-4"
   aria-label="Main navigation"
 >
-  <div class="flex min-h-13 items-center gap-3 px-2 pb-4">
+  <div class="flex min-h-13 shrink-0 items-center gap-3 px-2 pb-4">
     <a
       href="/dashboard"
       class="flex min-w-0 flex-1 items-center gap-2.5 text-base-content no-underline"
@@ -148,15 +156,15 @@
     </label>
   </div>
 
-  <nav class="flex flex-1 flex-col gap-4 overflow-y-auto py-4">
-    {#if workspaceItems.length}
+  <nav class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-4">
+    {#if visibleWorkspaceItems.length}
       <ul class="m-0 flex list-none flex-col gap-1 p-0">
         <li
           class="px-3 pb-1 pt-0 text-xs font-semibold uppercase tracking-wider text-base-content/60"
         >
           Workspace
         </li>
-        {#each workspaceItems as item (item.url)}
+        {#each visibleWorkspaceItems as item (item.url)}
           <li class="m-0 p-0">
             <a
               class="flex min-h-9 items-center gap-2.5 rounded-md px-3 text-sm font-medium text-base-content/80 hover:bg-base-200 aria-[current=page]:bg-primary/10 aria-[current=page]:font-semibold aria-[current=page]:text-primary"
@@ -272,5 +280,6 @@
       name: user?.full_name || user?.username || "User",
       email: user?.email ?? "",
     }}
+    {onClose}
   />
 </aside>

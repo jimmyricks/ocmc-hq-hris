@@ -70,7 +70,6 @@ SYSTEM_ADMIN_ENTITIES = frozenset(
         "entity_permission",
         "audit_log",
         "oc_audit_log",
-        "ledger",
         "model",
         "model_definition",
         "entity_definition",
@@ -84,11 +83,10 @@ SYSTEM_ADMIN_ENTITIES = frozenset(
         "workflow_transition",
         "module_order",
         "entity_order",
-        "payroll_line_item",
-        "payroll_period",
-        "payroll_entry",
-        "invoice",
-        "payroll_settings",
+        # Payroll entities are deliberately absent: the entity "rbac" blocks
+        # grant them to both admins and HR, so access is governed by
+        # permission rows rather than a blanket admin-only gate.
+        # user_task_rate stays gated — row scope blocks it entirely anyway.
         "user_task_rate",
     }
 )

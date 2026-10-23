@@ -88,6 +88,7 @@ APP_ROUTE_MODULES = [
     "app.api.app.planner",
     "app.api.app.payroll",
     "app.api.app.utils",
+    "app.api.app.bahandi_integration",
 ]
 
 # Product features — routes served under /api/features/

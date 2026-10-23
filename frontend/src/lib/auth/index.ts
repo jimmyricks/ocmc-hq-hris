@@ -59,6 +59,11 @@ export function setToken(token: string) {
 	auth.update((s) => ({ ...s, token }));
 }
 
+export function setUser(user: User) {
+	if (browser) localStorage.setItem('user', JSON.stringify(user));
+	auth.update((s) => ({ ...s, user }));
+}
+
 export function clearAuth() {
 	clearActiveWorkspaceId();
 	if (browser) {

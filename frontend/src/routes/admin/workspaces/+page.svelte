@@ -9,9 +9,9 @@
   import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import { workspaceApi } from "$lib/workspaces/api.js";
+  import { useAppState } from "$lib/app-state.svelte.js";
   import type { WorkspaceContext } from "$lib/workspaces/types.js";
 
-  type MembershipRole = "member" | "supervisor";
   type MappingEntity = "project" | "task_type";
   type AdminUser = {
     id: string;
@@ -22,7 +22,7 @@
   type Membership = {
     id: string;
     user_id: string;
-    membership_role: MembershipRole;
+    membership_role: "supervisor";
     is_home: boolean;
   };
   type AdminResource = {
@@ -42,6 +42,7 @@
     task_types: UnmappedRecord[];
   };
 
+  const appState = useAppState();
   let context = $state<WorkspaceContext | null>(null);
   let users = $state<AdminUser[]>([]);
   let members = $state<Membership[]>([]);
@@ -53,8 +54,6 @@
   let workspaceId = $state("");
   let workspaceColor = $state("#45aeee");
   let userId = $state("");
-  let membershipRole = $state<MembershipRole>("member");
-  let isHome = $state(true);
   let mappingEntity = $state<MappingEntity>("project");
   let mappingRecordId = $state("");
   let loading = $state(true);
@@ -82,11 +81,13 @@
   async function load() {
     loading = true;
     try {
-      const [workspaceData, userData, unmappedData] = await Promise.all([
-        workspaceApi.getContext(),
+      const [boot, userData, unmappedData] = await Promise.all([
+        appState.ensureBoot(),
         taskApi.getUsers(),
         workspaceApi.getUnmapped(),
       ]);
+      const workspaceData = boot?.workspace_context;
+      if (!workspaceData) throw new Error("Workspace access is unavailable");
       context = workspaceData;
       users = userData as AdminUser[];
       unmapped = unmappedData;
@@ -159,12 +160,7 @@
     if (!workspaceId || !userId) return;
     savingMembership = true;
     try {
-      await workspaceApi.assignMember(
-        workspaceId,
-        userId,
-        membershipRole,
-        isHome,
-      );
+      await workspaceApi.assignMember(workspaceId, userId, "supervisor");
       userId = "";
       await loadMembers();
       toast.success("Workspace access assigned");
@@ -241,8 +237,8 @@
     >
       HQ administration
     </p>
-    <h1 class="mt-2 text-3xl font-semibold tracking-tight">Workspaces</h1>
-    <p class="mt-2 text-sm text-base-content/60">
+    <h1 class="mt-2 text-2xl font-bold tracking-tight">Workspaces</h1>
+    <p class="mt-1 text-sm text-base-content/60">
       Configure company access, calendar colors, and legacy project/rate
       ownership.
     </p>
@@ -373,10 +369,10 @@
         <div class="grid gap-6 xl:grid-cols-2">
           <section class="flex flex-col gap-4 rounded-xl border p-4">
             <div>
-              <h2 class="font-semibold">Assign company access</h2>
+              <h2 class="font-semibold">Assign supervisor access</h2>
               <p class="mt-1 text-xs text-base-content/60">
-                Members have one home company. Supervisors can have several
-                assigned companies.
+                Employees are added to projects. Supervisors can be assigned to
+                multiple companies.
               </p>
             </div>
             <Field.Field>
@@ -405,69 +401,6 @@
                 </Select.Content>
               </Select.Root>
             </Field.Field>
-            <div class="grid gap-3 sm:grid-cols-2">
-              <Field.Field>
-                <Field.Label for="membership-role">Workspace role</Field.Label>
-                <Select.Root
-                  type="single"
-                  value={membershipRole}
-                  onValueChange={(value) => {
-                    membershipRole = (value as MembershipRole) ?? "member";
-                    if (membershipRole === "member") isHome = true;
-                  }}
-                >
-                  <Select.Trigger id="membership-role" class="w-full">
-                    <span class="capitalize">{membershipRole}</span>
-                  </Select.Trigger>
-                  <Select.Content>
-                    <Select.Group>
-                      <Select.Item value="member" label="Member"
-                        >Member</Select.Item
-                      >
-                      <Select.Item value="supervisor" label="Supervisor">
-                        Supervisor
-                      </Select.Item>
-                    </Select.Group>
-                  </Select.Content>
-                </Select.Root>
-              </Field.Field>
-              <Field.Field>
-                <Field.Label for="home-workspace"
-                  >Workspace assignment</Field.Label
-                >
-                <Select.Root
-                  type="single"
-                  value={isHome || membershipRole === "member" ? "yes" : "no"}
-                  onValueChange={(value) => {
-                    isHome = value === "yes";
-                    if (membershipRole === "member") isHome = true;
-                  }}
-                >
-                  <Select.Trigger id="home-workspace" class="w-full">
-                    <span>
-                      {isHome || membershipRole === "member"
-                        ? "Home workspace"
-                        : "Additional supervisor access"}
-                    </span>
-                  </Select.Trigger>
-                  <Select.Content>
-                    <Select.Group>
-                      <Select.Item value="yes" label="Home workspace">
-                        Home workspace
-                      </Select.Item>
-                      {#if membershipRole === "supervisor"}
-                        <Select.Item
-                          value="no"
-                          label="Additional supervisor access"
-                        >
-                          Additional supervisor access
-                        </Select.Item>
-                      {/if}
-                    </Select.Group>
-                  </Select.Content>
-                </Select.Root>
-              </Field.Field>
-            </div>
             <Button
               class="self-start"
               disabled={!workspaceId || !userId || savingMembership}
@@ -503,7 +436,7 @@
                 </div>
               {:else}
                 <p class="text-xs text-base-content/60">
-                  No members assigned to this workspace yet.
+                  No supervisors assigned to this workspace yet.
                 </p>
               {/each}
             </div>

@@ -28,7 +28,7 @@ async def _build_error_log_instance(
     if meta and meta.naming and meta.naming.enabled:
         naming_repo = NamingRepository(db)
         naming_service = NamingAppService(naming_repo)
-        generated_id = await naming_service.generate_id(meta.naming)
+        generated_id = await naming_service.generate_id(meta.naming, entity="error_log")
 
     return ErrorLog(
         id=generated_id or f"ERR-{uuid.uuid4()}",

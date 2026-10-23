@@ -216,7 +216,7 @@ async def test_workspace_migrations_align_the_legacy_schema_for_seeders(
         assert "is_continuous" in project_columns
         assert "planned_start_at" not in task_columns
         assert "planned_end_at" not in task_columns
-        assert revision == "20261023_project_schedule"
+        assert revision == "20261103_ws_task_workflows"
     finally:
         await legacy_engine.dispose()
 

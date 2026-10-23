@@ -14,10 +14,8 @@
   import * as Card from "$lib/components/ui/card/index.js";
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { workspaceApi } from "$lib/workspaces/api";
-  import type {
-    PlannerActivity,
-    WorkspaceContext,
-  } from "$lib/workspaces/types";
+  import type { PlannerActivity } from "$lib/workspaces/types";
+  import { useAppState } from "$lib/app-state.svelte.js";
   import { taskApi } from "$lib/task-manager/api.js";
   import type { Project } from "$lib/task-manager/types.js";
 
@@ -48,9 +46,11 @@
   let view = $state<"month" | "agenda">("month");
   let detailOpen = $state(false);
   let detailTaskId = $state<string | null>(null);
-  let workspaceContext = $state<WorkspaceContext | null>(null);
+  const appState = useAppState();
+  const workspaceContext = $derived(appState.workspaceContext);
   let activityOpen = $state(false);
   let activitySaving = $state(false);
+  let composerError = $state("");
   let activityTitle = $state("");
   let activityDescription = $state("");
   let activityType = $state("plan");
@@ -246,8 +246,12 @@
   }
 
   async function openActivityComposer() {
-    const context = workspaceContext ?? (await workspaceApi.getContext());
-    workspaceContext = context;
+    const context =
+      workspaceContext ?? (await appState.ensureBoot())?.workspace_context;
+    if (!context) {
+      errorMessage = "Workspace access could not be loaded.";
+      return;
+    }
     activityTitle = "";
     activityDescription = "";
     activityType = "plan";
@@ -269,6 +273,7 @@
     until.setDate(until.getDate() + 28);
     recurrenceUntil = dateKey(until);
     recurrenceInterval = "1";
+    composerError = "";
     resources = await workspaceApi.getResources();
     activityOpen = true;
   }
@@ -277,16 +282,16 @@
     if (!activityTitle.trim() || !activityStartsAt || !activityEndsAt) return;
     const workspaceId = composerWorkspaceId;
     if (!workspaceId) {
-      errorMessage = "Select a company workspace before creating an activity.";
+      composerError = "Select a company workspace before creating an activity.";
       return;
     }
     if (new Date(activityEndsAt) <= new Date(activityStartsAt)) {
-      errorMessage = "The activity end must be later than its start.";
+      composerError = "The activity end must be later than its start.";
       return;
     }
 
     activitySaving = true;
-    errorMessage = "";
+    composerError = "";
     try {
       const common = {
         title: activityTitle.trim(),
@@ -321,7 +326,7 @@
       activityOpen = false;
       await load();
     } catch (error: any) {
-      errorMessage = error.message || "The activity could not be saved.";
+      composerError = error.message || "The activity could not be saved.";
     } finally {
       activitySaving = false;
     }
@@ -412,24 +417,19 @@
       rangeStart.setDate(first.getDate() - offset);
       const rangeEnd = new Date(rangeStart);
       rangeEnd.setDate(rangeStart.getDate() + 42);
-      const [projectData, activityData, contextData] = await Promise.all([
+      const [projectData, activityData, boot] = await Promise.all([
         taskApi.getProjects(),
         workspaceApi.getPlannerActivities(
           rangeStart.toISOString(),
           rangeEnd.toISOString(),
-          {
-            projectId: selectedProject === "all" ? undefined : selectedProject,
-            teamId: selectedTeam === "all" ? undefined : selectedTeam,
-            workspaceId:
-              selectedWorkspace === "all" ? undefined : selectedWorkspace,
-          },
         ),
-        workspaceApi.getContext(),
+        appState.ensureBoot(),
       ]);
       if (generation !== loadGeneration) return;
       projects = projectData;
       activities = activityData;
-      workspaceContext = contextData;
+      const contextData = boot?.workspace_context;
+      if (!contextData) throw new Error("Workspace access could not be loaded");
       if (
         contextData.capabilities?.can_view_global_schedule &&
         !contextData.capabilities.is_system_admin
@@ -484,39 +484,121 @@
 </svelte:head>
 
 <div class="planner flex flex-col gap-6">
-  <section
-    class="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"
-  >
-    <div class="space-y-2">
-      <p class="eyebrow">Workspace calendar</p>
-      <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
-        Team planner
-      </h1>
-      <p class="max-w-xl text-sm text-base-content/60 sm:text-base">
+  <section class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+    <div>
+      <p
+        class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60"
+      >
+        Workspace calendar
+      </p>
+      <h1 class="mt-2 text-2xl font-bold tracking-tight">Team planner</h1>
+      <p class="mt-1 max-w-xl text-sm text-base-content/60">
         Authorized tasks, plans, lessons, and studio bookings in one calendar.
       </p>
       {#if canViewGlobalSchedule}
-        <p class="max-w-xl text-xs text-base-content/60">
+        <p class="mt-2 max-w-xl text-xs text-base-content/60">
           Other workspaces appear as coordination summaries only; their records
           cannot be opened from this calendar.
         </p>
       {/if}
     </div>
-    <div class="flex flex-wrap gap-2 self-start sm:self-auto">
-      {#if canManage}
-        <Button variant="outline" onclick={openActivityComposer}>
-          <CalendarDaysIcon data-icon="inline-start" />
+    {#if canManage}
+      <div class="flex flex-wrap gap-2 self-start sm:self-auto">
+        <Button variant="primary" onclick={openActivityComposer}>
+          <CalendarDaysIcon class="size-4" />
           Add activity
         </Button>
-      {/if}
-      {#if canManage}
-        <Button href="/project/all" variant="primary">
+        <Button href="/project/all" variant="outline">
           <PlusIcon class="size-4" />
           Add task
         </Button>
-      {/if}
-    </div>
+      </div>
+    {/if}
   </section>
+
+  <!-- Filters -->
+  <div
+    class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
+  >
+    <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+      <Select.Root type="single" bind:value={selectedProject}>
+        <Select.Trigger
+          size="md"
+          class="w-full min-w-0 sm:w-44"
+          aria-label="Filter by project"
+        >
+          {selectedProject === "all"
+            ? "All projects"
+            : (projects.find((project) => project.id === selectedProject)
+                ?.name ?? "All projects")}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="all" label="All projects">
+            All projects
+          </Select.Item>
+          {#each projects as project (project.id)}
+            <Select.Item value={project.id} label={project.name}>
+              {project.name}
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+
+      {#if canFilterWorkspace}
+        <Select.Root type="single" bind:value={selectedWorkspace}>
+          <Select.Trigger
+            size="md"
+            class="w-full min-w-0 sm:w-48"
+            aria-label="Filter by workspace"
+          >
+            {selectedWorkspace === "all"
+              ? "All workspaces"
+              : (workspaceOptions.find(
+                  (workspace) => workspace.id === selectedWorkspace,
+                )?.name ?? "All workspaces")}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="all" label="All workspaces">
+              All workspaces
+            </Select.Item>
+            {#each workspaceOptions as workspace (workspace.id)}
+              <Select.Item value={workspace.id} label={workspace.name}>
+                {workspace.name}
+              </Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      {/if}
+
+      <Select.Root type="single" bind:value={selectedTeam}>
+        <Select.Trigger
+          size="md"
+          class="w-full min-w-0 sm:w-44"
+          aria-label="Filter by team"
+        >
+          {selectedTeam === "all"
+            ? "All teams"
+            : (teamOptions.find((team) => team.id === selectedTeam)?.name ??
+              "All teams")}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="all" label="All teams">All teams</Select.Item>
+          {#each teamOptions as team (team.id)}
+            <Select.Item value={team.id} label={team.name}>
+              {team.name}
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
+
+    <Tabs.Root bind:value={view} class="w-full sm:w-auto">
+      <Tabs.List class="tabs-sm grid w-full grid-cols-2 sm:flex">
+        <Tabs.Trigger value="month" class="text-xs">Month</Tabs.Trigger>
+        <Tabs.Trigger value="agenda" class="text-xs">Agenda</Tabs.Trigger>
+      </Tabs.List>
+    </Tabs.Root>
+  </div>
 
   {#if errorMessage}
     <div
@@ -529,141 +611,34 @@
   <div class="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_310px]">
     <Card.Root class="overflow-hidden">
       <div
-        class="flex flex-col gap-4 border-b border-base-300/70 p-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between"
+        class="flex items-center gap-3 border-b border-base-300/70 p-4 sm:px-5"
       >
         <!-- Month navigation -->
-        <div class="flex min-w-0 items-center justify-between gap-4">
-          <div class="flex min-w-0 items-center gap-3">
-            <div class="join shrink-0">
-              <Button
-                variant="outline"
-                icon
-                aria-label="Previous month"
-                onclick={() => changeMonth(-1)}
-              >
-                <ArrowLeftIcon class="size-4" />
-              </Button>
-              <Button variant="outline" class="shrink-0" onclick={goToToday}>
-                Today
-              </Button>
-              <Button
-                variant="outline"
-                icon
-                aria-label="Next month"
-                onclick={() => changeMonth(1)}
-              >
-                <ArrowRightIcon class="size-4" />
-              </Button>
-            </div>
-
-            <div class="min-w-0">
-              <h2 class="truncate text-xl font-semibold tracking-tight">
-                {monthHeading}
-              </h2>
-            </div>
-          </div>
+        <div class="join shrink-0">
+          <Button
+            variant="outline"
+            icon
+            aria-label="Previous month"
+            onclick={() => changeMonth(-1)}
+          >
+            <ArrowLeftIcon class="size-4" />
+          </Button>
+          <Button variant="outline" class="shrink-0" onclick={goToToday}>
+            Today
+          </Button>
+          <Button
+            variant="outline"
+            icon
+            aria-label="Next month"
+            onclick={() => changeMonth(1)}
+          >
+            <ArrowRightIcon class="size-4" />
+          </Button>
         </div>
 
-        <!-- Calendar controls -->
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Select.Root
-            type="single"
-            value={selectedProject}
-            onValueChange={(value) => {
-              selectedProject = value ?? "all";
-              load();
-            }}
-          >
-            <Select.Trigger
-              size="md"
-              class="w-full min-w-0 sm:w-44"
-              aria-label="Filter by project"
-            >
-              {selectedProject === "all"
-                ? "All projects"
-                : (projects.find((project) => project.id === selectedProject)
-                    ?.name ?? "All projects")}
-            </Select.Trigger>
-            <Select.Content>
-              <Select.Item value="all" label="All projects">
-                All projects
-              </Select.Item>
-              {#each projects as project (project.id)}
-                <Select.Item value={project.id} label={project.name}>
-                  {project.name}
-                </Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-
-          {#if canFilterWorkspace}
-            <Select.Root
-              type="single"
-              value={selectedWorkspace}
-              onValueChange={(value) => {
-                selectedWorkspace = value ?? "all";
-                load();
-              }}
-            >
-              <Select.Trigger
-                size="md"
-                class="w-full min-w-0 sm:w-48"
-                aria-label="Filter by workspace"
-              >
-                {selectedWorkspace === "all"
-                  ? "All workspaces"
-                  : (workspaceOptions.find(
-                      (workspace) => workspace.id === selectedWorkspace,
-                    )?.name ?? "All workspaces")}
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="all" label="All workspaces">
-                  All workspaces
-                </Select.Item>
-                {#each workspaceOptions as workspace (workspace.id)}
-                  <Select.Item value={workspace.id} label={workspace.name}>
-                    {workspace.name}
-                  </Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          {/if}
-
-          <Select.Root
-            type="single"
-            value={selectedTeam}
-            onValueChange={(value) => {
-              selectedTeam = value ?? "all";
-              load();
-            }}
-          >
-            <Select.Trigger
-              size="md"
-              class="w-full min-w-0 sm:w-44"
-              aria-label="Filter by team"
-            >
-              {selectedTeam === "all"
-                ? "All teams"
-                : (teamOptions.find((team) => team.id === selectedTeam)?.name ??
-                  "All teams")}
-            </Select.Trigger>
-            <Select.Content>
-              <Select.Item value="all" label="All teams">All teams</Select.Item>
-              {#each teamOptions as team (team.id)}
-                <Select.Item value={team.id} label={team.name}>
-                  {team.name}
-                </Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-
-          <Tabs.Root bind:value={view} class="w-full sm:w-auto">
-            <Tabs.List class="tabs-sm grid w-full grid-cols-2 sm:flex">
-              <Tabs.Trigger value="month" class="text-xs">Month</Tabs.Trigger>
-              <Tabs.Trigger value="agenda" class="text-xs">Agenda</Tabs.Trigger>
-            </Tabs.List>
-          </Tabs.Root>
-        </div>
+        <h2 class="min-w-0 truncate text-xl font-semibold tracking-tight">
+          {monthHeading}
+        </h2>
       </div>
 
       {#if view === "month"}
@@ -1115,6 +1090,14 @@
       </Field.Field>
     </Field.FieldGroup>
 
+    {#if composerError}
+      <p
+        class="rounded-lg border border-error/20 bg-error/5 px-3 py-2 text-sm text-error"
+      >
+        {composerError}
+      </p>
+    {/if}
+
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (activityOpen = false)}>
         Cancel
@@ -1129,14 +1112,6 @@
 <style>
   .planner {
     animation: arrive 420ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
-  }
-
-  .eyebrow {
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
   }
 
   .calendar-wrap {

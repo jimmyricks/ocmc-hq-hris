@@ -26,7 +26,7 @@ class WorkspaceMembership(BaseModel):
         String(36), ForeignKey("core_users.id"), nullable=False, index=True
     )
     membership_role: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="member"
+        String(30), nullable=False, default="supervisor"
     )
     is_home: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

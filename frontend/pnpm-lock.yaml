@@ -11,6 +11,9 @@ importers:
       dompurify:
         specifier: 3.1.6
         version: 3.1.6
+      svelvet:
+        specifier: ^11.0.5
+        version: 11.0.5(svelte@5.56.4)
     devDependencies:
       '@fontsource-variable/dm-sans':
         specifier: ^5.2.8
@@ -798,6 +801,16 @@ packages:
     resolution: {integrity: sha512-/d0QHehmRuJW8gVz395MTkPcPozxzdjBMBE8oEYGz8O3b9KTMzzQ9ZHJQLuFKOHOPQbU6kx/X4iid/EBBzH7iw==}
     engines: {node: '>=18'}
 
+  svelvet@10.0.2:
+    resolution: {integrity: sha512-CSxAyQ9xF/Qq3K0xsL/gy9u9UpC4DVFUUbq3awpQ9Dic4EGJ40qAhlcCKBBAb3Kul6hlks2bzlyBmNby8CfpDg==}
+    peerDependencies:
+      svelte: '>=3.59.2 || ^4.0.0'
+
+  svelvet@11.0.5:
+    resolution: {integrity: sha512-wGDGh3bRKK06stu613DC+r4ujE7sWkFTAp4bfW6Impc2A89Ix0M/PzZAyeW229FMS5TF2GRDugHgpk0q0D8k2g==}
+    peerDependencies:
+      svelte: '>=3.59.2 || ^4.0.0'
+
   tailwindcss@4.3.2:
     resolution: {integrity: sha512-WtctNNSH8A9jlMIqxzuYumOHU5uGZyRv0Q5svQl+oEPy5w84YpBxdb7MdqyiSPQge5jTJ6zFQLq0PFygdccSBA==}
 
@@ -823,6 +836,10 @@ packages:
 
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+    hasBin: true
 
   vite@8.1.4:
     resolution: {integrity: sha512-bTT9PsdWO+MQMNG9ZXIP/qM9wGh37DFxTV/sPq9cFpHr3w4jkgef032PkAL9jAqhk3Nz8NQw3O8n6/xFkqO4QQ==}
@@ -1502,6 +1519,16 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
+  svelvet@10.0.2(svelte@5.56.4):
+    dependencies:
+      svelte: 5.56.4
+
+  svelvet@11.0.5(svelte@5.56.4):
+    dependencies:
+      svelte: 5.56.4
+      svelvet: 10.0.2(svelte@5.56.4)
+      uuid: 11.1.1
+
   tailwindcss@4.3.2: {}
 
   tapable@2.3.3: {}
@@ -1519,6 +1546,8 @@ snapshots:
   typescript@6.0.3: {}
 
   undici-types@8.3.0: {}
+
+  uuid@11.1.1: {}
 
   vite@8.1.4(@types/node@26.1.1)(jiti@2.7.0):
     dependencies:

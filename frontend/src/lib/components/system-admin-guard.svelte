@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { getToken, getUser } from "$lib/auth";
-  import { workspaceApi } from "$lib/workspaces/api";
+  import { getToken } from "$lib/auth";
+  import { useAppState } from "$lib/app-state.svelte.js";
 
   let { children } = $props();
+  const appState = useAppState();
   let allowed = $state(false);
   let checked = $state(false);
 
@@ -13,20 +14,17 @@
       await goto("/login");
       return;
     }
-    try {
-      const context = await workspaceApi.getContext();
-      const hasAdminRole = Boolean(
-        getUser()?.is_superuser ||
-          getUser()?.roles?.some((role) =>
-            ["Administrator", "SystemManager"].includes(role),
-          ),
-      );
-      allowed = context.capabilities?.is_system_admin ?? hasAdminRole;
-    } catch {
-      allowed = false;
-    } finally {
-      checked = true;
-    }
+    const boot = await appState.ensureBoot();
+    const hasAdminRole = Boolean(
+      boot?.user?.is_superuser ||
+        boot?.user?.roles?.some((role) =>
+          ["Administrator", "SystemManager"].includes(role),
+        ),
+    );
+    allowed = Boolean(
+      boot?.workspace_context?.capabilities?.is_system_admin ?? hasAdminRole,
+    );
+    checked = true;
     if (!allowed) await goto("/dashboard");
   });
 </script>

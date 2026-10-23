@@ -20,8 +20,17 @@ echo ""
 
 # Start backend in the background.
 cd backend
-source .venv/bin/activate
-python -m uvicorn app.main:app --host "$HOST" --port "$PORT" --reload &
+
+# Bootstrap the venv if it doesn't exist yet.
+if [ ! -x .venv/bin/python ]; then
+    echo "Creating backend virtualenv..."
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+fi
+
+# Use the venv's interpreter directly; `source activate` can silently pick up
+# a foreign venv if the script was copied from another project.
+.venv/bin/python -m uvicorn app.main:app --host "$HOST" --port "$PORT" --reload &
 BACKEND_PID=$!
 cd "$SCRIPT_DIR"
 

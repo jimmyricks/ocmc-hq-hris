@@ -79,8 +79,10 @@ async def verify_workspace_schema() -> None:
     required_columns = {
         "project": {"workspace_id", "team_id", "is_continuous"},
         "task": {"workspace_id"},
-        "task_type": {"workspace_id"},
+        "task_type": {"workspace_id", "submission_mode"},
+        "task_submission": {"content"},
         "payroll_line_item": {"workspace_id"},
+        "core_workflows": {"workspace_id", "is_default"},
     }
     async with engine.connect() as conn:
         schema_state = await conn.run_sync(

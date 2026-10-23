@@ -7,7 +7,7 @@
   import ProjectFormModal from "./project-form-modal.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
-  import { workspaceApi } from "$lib/workspaces/api";
+  import { useAppState } from "$lib/app-state.svelte.js";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import LayersIcon from "@lucide/svelte/icons/layers";
 
@@ -17,11 +17,14 @@
     onClose?: () => void;
   } = $props();
 
+  const appState = useAppState();
   let projects = $state<Project[]>([]);
   let users = $state<User[]>([]);
   let loading = $state(true);
   let createOpen = $state(false);
-  let canManageProjects = $state(false);
+  const canManageProjects = $derived(
+    appState.workspaceContext?.can_manage ?? false,
+  );
 
   $effect(() => {
     if (!browser) return;
@@ -31,12 +34,7 @@
   async function loadData() {
     loading = true;
     try {
-      const [projectData, context] = await Promise.all([
-        refCache.getProjects(),
-        workspaceApi.getContext(),
-      ]);
-      projects = projectData;
-      canManageProjects = context.can_manage;
+      projects = await refCache.getProjects();
     } catch (err) {
       console.error("Failed to load projects:", err);
       projects = [];
@@ -75,7 +73,8 @@
     {#if canManageProjects}
       <Button
         variant="ghost"
-        size="sm" icon
+        size="sm"
+        icon
         class="ml-auto size-7 min-h-7"
         aria-label="Add project"
         onclick={handleCreate}

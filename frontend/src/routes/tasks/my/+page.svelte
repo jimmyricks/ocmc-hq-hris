@@ -2,16 +2,13 @@
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
   import { refCache } from "$lib/task-manager/ref-cache.js";
-  import { listFiltered, saveEntity } from "$lib/api/index.js";
+  import { saveEntity } from "$lib/api/index.js";
   import { toast } from "$lib/notifications";
-  import { workspaceApi } from "$lib/workspaces/api.js";
-  import type {
-    Project,
-    Task,
-    TaskAssignment,
-    User,
-  } from "$lib/task-manager/types.js";
-  import { getToken, getUser } from "$lib/auth";
+  import { taskApi } from "$lib/task-manager/api.js";
+  import type { Project, Task, User } from "$lib/task-manager/types.js";
+  import { getToken } from "$lib/auth";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
   import {
     stateBadge,
     formatDueDate,
@@ -20,7 +17,6 @@
   } from "$lib/task-manager/utils.js";
 
   import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import * as Empty from "$lib/components/ui/empty/index.js";
@@ -38,37 +34,23 @@
   import UserPlusIcon from "@lucide/svelte/icons/user-plus";
   import XIcon from "@lucide/svelte/icons/x";
 
+  const appState = useAppState();
   let tasks = $state<Task[]>([]);
-  let assignments = $state<TaskAssignment[]>([]);
   let projects = $state<Project[]>([]);
   let users = $state<User[]>([]);
   let loading = $state(true);
   let error = $state("");
   let tab = $state("active");
+  let tasksPageSize = $state(25);
+  let tasksTotal = $state(0);
+  let tasksPage = $state(appState.tablePage("my-tasks", "active"));
+  let loadedTab = $state("");
   let detailOpen = $state(false);
   let detailTaskId = $state<string | null>(null);
   let canManageWorkspace = $state(false);
   let selectedProject = $state<Project | null>(null);
   let configOpen = $state(false);
   let membersOpen = $state(false);
-
-  let activeTasks = $derived(
-    tasks.filter((t) => {
-      const s = taskState(t);
-      return [
-        "draft_assigned",
-        "in_progress",
-        "needs_revision",
-        "for_review",
-      ].includes(s);
-    }),
-  );
-  let completedTasks = $derived(
-    tasks.filter((t) => {
-      const s = taskState(t);
-      return ["approved", "closed"].includes(s);
-    }),
-  );
 
   function projectName(id: string): string {
     return projects.find((p) => p.id === id)?.name ?? "—";
@@ -125,48 +107,66 @@
       goto("/login");
       return;
     }
-    load();
+    if (loadedTab !== tab) {
+      loadedTab = tab;
+      tasksPage = appState.tablePage("my-tasks", tab);
+      void load();
+    }
   });
 
   async function load() {
     loading = true;
     error = "";
     try {
-      const user = getUser();
-      if (!user) {
-        goto("/login");
-        return;
-      }
-      const [assignmentsRes, projectsRes, workspaceRes] = await Promise.all([
-        listFiltered("task_assignment", [
-          { field: "user_id", op: "eq", value: user.id },
-        ]),
+      const [projectsRes, boot] = await Promise.all([
         refCache.getProjects(),
-        workspaceApi.getContext().catch(() => null),
+        appState.ensureBoot(),
       ]);
-      assignments = (assignmentsRes.data ?? []) as TaskAssignment[];
       projects = projectsRes;
-      canManageWorkspace = workspaceRes?.can_manage ?? false;
-      const taskIds = assignments.map((a) => a.task_id);
-      if (taskIds.length === 0) {
-        tasks = [];
-        loading = false;
-        return;
-      }
-      const tasksRes = await listFiltered("task", [
-        { field: "id", op: "in", value: taskIds },
-      ]);
-      tasks = (tasksRes.data ?? []) as Task[];
+      canManageWorkspace = Boolean(boot?.workspace_context?.can_manage);
+      await loadTasks(tasksPage);
     } catch (err: any) {
       error = err.message || "Failed to load tasks";
     } finally {
       loading = false;
     }
   }
+
+  async function loadTasks(targetPage = tasksPage) {
+    try {
+      const result = await taskApi.getMyTasksPage(
+        tab === "completed" ? "completed" : "active",
+        "",
+        targetPage,
+        tasksPageSize,
+      );
+      if (!result.items.length && result.total > 0 && targetPage > 1) {
+        return loadTasks(Math.ceil(result.total / tasksPageSize));
+      }
+      tasks = result.items;
+      tasksTotal = result.total;
+      tasksPage = result.page;
+      appState.rememberTablePage("my-tasks", tasksPage, tab);
+    } catch (err: any) {
+      error = err.message || "Failed to load tasks";
+      tasks = [];
+      tasksTotal = 0;
+    }
+  }
+
+  function setTasksPage(targetPage: number) {
+    tasksPage = targetPage;
+    appState.rememberTablePage("my-tasks", targetPage, tab);
+    void loadTasks(targetPage);
+  }
+
+  async function refreshTasks() {
+    await loadTasks(tasksPage);
+  }
 </script>
 
 <div class="flex flex-col gap-6">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-wrap items-end justify-between gap-4">
     <h1 class="text-2xl font-bold tracking-tight">My Tasks</h1>
   </div>
 
@@ -180,62 +180,46 @@
     <Tabs.List class="grid w-full max-w-xs grid-cols-2">
       <Tabs.Trigger value="active" class="gap-1.5">
         Active
-        {#if !loading && activeTasks.length}
-          <span class="ml-1 text-xs text-base-content/60"
-            >{activeTasks.length}</span
-          >
+        {#if !loading && tab === "active" && tasksTotal}
+          <span class="ml-1 text-xs text-base-content/60">{tasksTotal}</span>
         {/if}
       </Tabs.Trigger>
       <Tabs.Trigger value="completed" class="gap-1.5">
         Completed
-        {#if !loading && completedTasks.length}
-          <span class="ml-1 text-xs text-base-content/60"
-            >{completedTasks.length}</span
-          >
+        {#if !loading && tab === "completed" && tasksTotal}
+          <span class="ml-1 text-xs text-base-content/60">{tasksTotal}</span>
         {/if}
       </Tabs.Trigger>
     </Tabs.List>
 
-    {#each [{ value: "active", tasks: activeTasks }, { value: "completed", tasks: completedTasks }] as { value: tabValue, tasks: list } (tabValue)}
+    {#each [{ value: "active" }, { value: "completed" }] as { value: tabValue } (tabValue)}
       <Tabs.Content value={tabValue} class="pt-4">
-        <div class="border rounded-xl">
-          <Table.Root>
-            <Table.Header class="h-10 bg-base-200/50">
-              <Table.Row>
-                <Table.Head class="h-9 text-sm font-medium text-base-content/60"
-                  >Task</Table.Head
-                >
-                <Table.Head class="h-9 text-sm font-medium text-base-content/60"
-                  >Project</Table.Head
-                >
-                <Table.Head class="h-9 text-sm font-medium text-base-content/60"
-                  >Priority</Table.Head
-                >
-                <Table.Head class="h-9 text-sm font-medium text-base-content/60"
-                  >State</Table.Head
-                >
-                <Table.Head class="h-9 text-sm font-medium text-base-content/60"
-                  >Due</Table.Head
-                >
-                <Table.Head class="h-9 w-10"></Table.Head>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
+        <div
+          class="overflow-hidden rounded-box border border-base-300 bg-base-100"
+        >
+          <table class="table table-zebra">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Project</th>
+                <th>Priority</th>
+                <th>State</th>
+                <th>Due</th>
+                <th class="w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
               {#if loading}
                 {#each Array.from({ length: 4 }) as _, i (i)}
-                  <Table.Row>
+                  <tr>
                     {#each Array.from({ length: 6 }) as _, j (j)}
-                      <Table.Cell
-                        ><Skeleton
-                          class="h-4 w-full max-w-[6rem]"
-                        /></Table.Cell
-                      >
+                      <td><Skeleton class="h-4 w-full max-w-[6rem]" /></td>
                     {/each}
-                  </Table.Row>
+                  </tr>
                 {/each}
-              {:else if list.length === 0}
-                <Table.Row>
-                  <Table.Cell colspan={6} class="h-40">
+              {:else if tasks.length === 0}
+                <tr>
+                  <td colspan={6} class="h-40">
                     <Empty.Root>
                       <Empty.Media variant="icon">
                         <InboxIcon />
@@ -253,10 +237,10 @@
                         </Empty.Description>
                       </Empty.Header>
                     </Empty.Root>
-                  </Table.Cell>
-                </Table.Row>
+                  </td>
+                </tr>
               {:else}
-                {#each list as task (task.id)}
+                {#each tasks as task (task.id)}
                   {@const badge = stateBadge({
                     workflow_state: task.workflow_state,
                     status: task.status,
@@ -266,14 +250,14 @@
                   {@const taskProject = projects.find(
                     (project) => project.id === task.project_id,
                   )}
-                  <Table.Row
+                  <tr
                     class="cursor-pointer hover:bg-base-200/40"
                     onclick={() => {
                       detailTaskId = task.id;
                       detailOpen = true;
                     }}
                   >
-                    <Table.Cell class="max-w-[16rem]">
+                    <td class="max-w-[16rem]">
                       <div class="flex flex-col gap-0.5">
                         <span class="block w-full truncate text-sm font-medium"
                           >{task.title}</span
@@ -284,11 +268,11 @@
                           >
                         {/if}
                       </div>
-                    </Table.Cell>
-                    <Table.Cell class="text-sm text-base-content/60"
-                      >{projectName(task.project_id)}</Table.Cell
+                    </td>
+                    <td class="text-sm text-base-content/60"
+                      >{projectName(task.project_id)}</td
                     >
-                    <Table.Cell>
+                    <td>
                       <Badge
                         class="text-xs rounded-xl"
                         variant="outline"
@@ -296,8 +280,8 @@
                       >
                         {pmeta.label}
                       </Badge>
-                    </Table.Cell>
-                    <Table.Cell>
+                    </td>
+                    <td>
                       <Badge
                         variant={badge.variant}
                         class="gap-1 text-xs rounded-xl"
@@ -308,8 +292,8 @@
                         ></span>
                         {badge.label}
                       </Badge>
-                    </Table.Cell>
-                    <Table.Cell>
+                    </td>
+                    <td>
                       <div class="flex items-center gap-1.5 whitespace-nowrap">
                         {#if due?.isOverdue}
                           <AlertTriangleIcon class="size-3.5 text-error" />
@@ -320,8 +304,8 @@
                           <span class="text-sm text-base-content/60">—</span>
                         {/if}
                       </div>
-                    </Table.Cell>
-                    <Table.Cell onclick={(event) => event.stopPropagation()}>
+                    </td>
+                    <td onclick={(event) => event.stopPropagation()}>
                       {#if canManageWorkspace && taskProject}
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger>
@@ -360,12 +344,26 @@
                       {:else}
                         <ArrowRightIcon class="size-4 text-base-content/60" />
                       {/if}
-                    </Table.Cell>
-                  </Table.Row>
+                    </td>
+                  </tr>
                 {/each}
               {/if}
-            </Table.Body>
-          </Table.Root>
+            </tbody>
+          </table>
+          {#if tabValue === tab}
+            <Pagination
+              page={tasksPage}
+              pageSize={tasksPageSize}
+              total={tasksTotal}
+              {loading}
+              pageSizeOptions={[10, 25, 50, 100]}
+              onchange={setTasksPage}
+              onpagesizechange={(size) => {
+                tasksPageSize = size;
+                setTasksPage(1);
+              }}
+            />
+          {/if}
         </div>
       </Tabs.Content>
     {/each}
@@ -376,7 +374,7 @@
   bind:open={detailOpen}
   taskId={detailTaskId}
   {projects}
-  onTaskUpdated={load}
+  onTaskUpdated={refreshTasks}
 />
 
 {#if selectedProject}
@@ -389,7 +387,6 @@
   <ProjectMembersModal
     bind:open={membersOpen}
     project={selectedProject}
-    {users}
-    onChanged={load}
+    onChanged={refreshTasks}
   />
 {/if}

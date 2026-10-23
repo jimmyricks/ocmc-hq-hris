@@ -4,7 +4,7 @@ Permissions Router
 Entity permission management endpoints.
 """
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -123,6 +123,8 @@ router = APIRouter(tags=["admin-permissions"])
 
 @router.get("/permissions/entities")
 async def get_entities_by_module(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
@@ -152,12 +154,17 @@ async def get_entities_by_module(
         rows.append(entity_payload)
     
     rows.sort(key=lambda e: (module_orders.get(e["module"], 999), e["sort_order"]))
+    total = len(rows)
+    start = (page - 1) * page_size
     
     return {
         "status": "success",
         "data": {
-            "rows": rows,
-            "total_entities": len(entities)
+            "rows": rows[start : start + page_size],
+            "total_entities": total,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
         }
     }
 

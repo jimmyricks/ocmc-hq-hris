@@ -9,10 +9,11 @@
     PayrollEntry,
     PayrollLineItem,
     PayrollPeriod,
-    PayrollSettings,
   } from "$lib/payroll/types.js";
   import type { User } from "$lib/task-manager/types.js";
   import { getToken } from "$lib/auth";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
 
   import * as Card from "$lib/components/ui/card/index.js";
@@ -20,7 +21,6 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import * as Avatar from "$lib/components/ui/avatar/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import DataTable from "./data-table.svelte";
 
@@ -30,32 +30,32 @@
 
   let periodId = $derived(page.params.periodId ?? "");
   let entryId = $derived(page.params.entryId ?? "");
+  const appState = useAppState();
 
   let entry = $state<PayrollEntry | null>(null);
   let period = $state<PayrollPeriod | null>(null);
   let lineItems = $state<PayrollLineItem[]>([]);
+  let lineItemsPage = $state(1);
+  let lineItemsPageSize = $state(25);
+  let lineItemsTotal = $state(0);
   let lineItemTaskInfo = $state<
     Record<
       string,
       {
         taskTitle: string;
-        taskKey?: string;
         taskTypeName?: string;
         submissionNotes?: string;
       }
     >
   >({});
   let users = $state<User[]>([]);
-  let settings = $state<PayrollSettings>({
-    currency: OFFICIAL_CURRENCY,
-  } as PayrollSettings);
   let loading = $state(true);
   let error = $state("");
+  let loadedRouteKey = $state("");
 
   type LineItemRow = {
     id: string;
     taskTitle: string;
-    taskKey?: string;
     taskTypeName?: string;
     submissionNotes?: string;
     rate: string;
@@ -106,8 +106,7 @@
       const info = lineItemTaskInfo[item.id];
       return {
         id: item.id,
-        taskTitle: info?.taskTitle ?? item.task_submission_id,
-        taskKey: info?.taskKey,
+        taskTitle: info?.taskTitle ?? "Task details unavailable",
         taskTypeName: info?.taskTypeName,
         submissionNotes: info?.submissionNotes,
         rate: formatCurrency(item.rate),
@@ -127,53 +126,127 @@
       .getUsers()
       .then((u) => (users = u))
       .catch(() => {});
-    payrollApi
-      .getSettings()
-      .then((s) => {
-        if (s) settings = s;
-      })
-      .catch(() => {});
-    loadEntry();
-    loadLineItems();
   });
 
-  async function loadEntry() {
+  $effect(() => {
+    const currentPeriodId = periodId;
+    const currentEntryId = entryId;
+    const routeKey = `${currentPeriodId}:${currentEntryId}`;
+    if (
+      !browser ||
+      !getToken() ||
+      !currentPeriodId ||
+      !currentEntryId ||
+      loadedRouteKey === routeKey
+    ) {
+      return;
+    }
+    loadedRouteKey = routeKey;
+    entry = null;
+    period = null;
+    lineItems = [];
+    lineItemTaskInfo = {};
+    error = "";
+    const storedPage = appState.tablePage("payroll-line-items", currentEntryId);
+    lineItemsPage = storedPage;
+    loading = true;
+    void loadRoute(currentPeriodId, currentEntryId, storedPage, routeKey);
+  });
+
+  async function loadRoute(
+    currentPeriodId: string,
+    currentEntryId: string,
+    targetPage: number,
+    routeKey: string,
+  ) {
     try {
-      const entries = await payrollApi.getEntriesForPeriod(periodId);
-      entry = entries.find((e) => e.id === entryId) ?? null;
-      const periods = await payrollApi.getPeriods();
-      period = periods.find((p) => p.id === periodId) ?? null;
+      const [loadedEntry, loadedPeriod] = await Promise.all([
+        payrollApi.getEntryForPeriod(currentPeriodId, currentEntryId),
+        payrollApi.getPeriod(currentPeriodId),
+      ]);
+      if (`${page.params.periodId}:${page.params.entryId}` !== routeKey) return;
+      entry = loadedEntry;
+      period = loadedPeriod;
+      await loadLineItems(targetPage, currentEntryId, routeKey);
     } catch (err: any) {
-      error = err.message || "Failed to load entry";
+      if (`${page.params.periodId}:${page.params.entryId}` === routeKey) {
+        error = err.message || "Failed to load entry";
+      }
+    } finally {
+      if (`${page.params.periodId}:${page.params.entryId}` === routeKey) {
+        loading = false;
+      }
     }
   }
 
-  async function loadLineItems() {
+  async function loadLineItems(
+    targetPage = lineItemsPage,
+    currentEntryId = entryId,
+    routeKey = `${periodId}:${entryId}`,
+  ) {
     loading = true;
     try {
-      const items = await payrollApi.getLineItemsForEntry(entryId);
-      lineItems = items;
-      const infoPromises = items.map(async (item) => {
+      const result = await payrollApi.getLineItemsForEntryPage(
+        currentEntryId,
+        targetPage,
+        lineItemsPageSize,
+      );
+      if (!result.items.length && result.total > 0 && targetPage > 1) {
+        return await loadLineItems(
+          Math.ceil(result.total / lineItemsPageSize),
+          currentEntryId,
+          routeKey,
+        );
+      }
+      if (`${page.params.periodId}:${page.params.entryId}` !== routeKey) return;
+      lineItems = result.items;
+      lineItemsTotal = result.total;
+      lineItemsPage = result.page;
+      appState.rememberTablePage(
+        "payroll-line-items",
+        lineItemsPage,
+        currentEntryId,
+      );
+      const infoPromises = lineItems.map(async (item) => {
         const info = await payrollApi.getLineItemTaskInfo(
           item.task_submission_id,
         );
         return [item.id, info] as const;
       });
       const infos = await Promise.all(infoPromises);
-      lineItemTaskInfo = Object.fromEntries(infos);
+      if (`${page.params.periodId}:${page.params.entryId}` === routeKey) {
+        lineItemTaskInfo = Object.fromEntries(infos);
+      }
     } catch (err: any) {
-      toast.error(err.message || "Failed to load line items");
+      if (`${page.params.periodId}:${page.params.entryId}` === routeKey) {
+        toast.error(err.message || "Failed to load line items");
+      }
     } finally {
-      loading = false;
+      if (`${page.params.periodId}:${page.params.entryId}` === routeKey) {
+        loading = false;
+      }
     }
+  }
+
+  function setLineItemsPage(targetPage: number) {
+    lineItemsPage = targetPage;
+    appState.rememberTablePage("payroll-line-items", targetPage, entryId);
+    void loadLineItems(targetPage);
   }
 
   async function handleApprove() {
     if (!entry) return;
     try {
       await payrollApi.approveEntry(entry.id);
-      toast.success(`Entry approved for ${userName(entry.user_id)}`);
-      await loadEntry();
+      toast.success(
+        `Entry approved and invoice issued for ${userName(entry.user_id)}`,
+      );
+      await loadRoute(
+        periodId,
+        entryId,
+        lineItemsPage,
+        `${periodId}:${entryId}`,
+      );
     } catch (err: any) {
       toast.error(err.message || "Failed to approve entry");
     }
@@ -183,14 +256,19 @@
     if (!entry) return;
     if (
       !confirm(
-        `Pay ${formatCurrency(entry.total_amount)} to ${userName(entry.user_id)}? This will write a ledger debit and mark the period as paid.`,
+        `Pay ${formatCurrency(entry.total_amount)} to ${userName(entry.user_id)}? This will write a ledger debit and mark this entry as paid.`,
       )
     )
       return;
     try {
       await payrollApi.payEntry(entry.id);
       toast.success(`Payment disbursed to ${userName(entry.user_id)}`);
-      await loadEntry();
+      await loadRoute(
+        periodId,
+        entryId,
+        lineItemsPage,
+        `${periodId}:${entryId}`,
+      );
     } catch (err: any) {
       toast.error(err.message || "Failed to pay entry");
     }
@@ -245,13 +323,70 @@
       </Card.Content>
     </Card.Root>
 
+    <Card.Root>
+      <Card.Header
+        class="flex-col items-start justify-between gap-4 sm:flex-row sm:items-center"
+      >
+        <div>
+          <Card.Title>Workflow</Card.Title>
+          <Card.Description>
+            Review this payroll entry and take its next available action.
+          </Card.Description>
+        </div>
+        <Card.Action class="w-full sm:w-auto">
+          {#if entry.status === "draft" || entry.status === "under_review"}
+            <Button
+              onclick={handleApprove}
+              disabled={loading || lineItems.length === 0}
+              class="gap-1.5"
+            >
+              <CheckIcon class="size-4" />
+              Approve Entry
+            </Button>
+          {:else if entry.status === "approved"}
+            <Button
+              onclick={handlePay}
+              disabled={loading || lineItems.length === 0}
+              class="gap-1.5"
+            >
+              <BanknoteIcon class="size-4" />
+              Disburse Payment
+            </Button>
+          {:else if entry.status === "paid"}
+            <Badge variant="default" class="gap-1.5">
+              <CheckIcon class="size-3.5" />
+              Payment disbursed
+            </Badge>
+          {/if}
+        </Card.Action>
+      </Card.Header>
+      <Card.Content class="pt-0">
+        {#if entry.status === "draft" || entry.status === "under_review"}
+          <p class="text-sm text-base-content/60">
+            Approval issues an invoice to the employee. Tasks remain in Done.
+          </p>
+        {:else if entry.status === "approved"}
+          <p class="text-sm text-base-content/60">
+            The invoice is available to the employee. Disbursement writes a
+            ledger debit and notifies them.
+          </p>
+        {:else if entry.status === "paid"}
+          <p class="text-sm text-base-content/60">
+            This entry has been paid
+            {#if entry.approved_at}
+              · approved {formatDate(entry.approved_at)}{/if}.
+          </p>
+        {/if}
+      </Card.Content>
+    </Card.Root>
+
     <!-- Task breakdown data table (below the header card, full width) -->
     <Card.Root>
       <Card.Header>
         <Card.Title>Task Breakdown</Card.Title>
         <Card.Description>
-          Approved submissions included in this payroll entry. Each task is
-          multiplied by its task type rate.
+          Approved tasks moved to Done during this cutoff, with the rate
+          snapshot captured at approval.
         </Card.Description>
       </Card.Header>
       <Card.Content>
@@ -265,55 +400,29 @@
             <Empty.Header>
               <Empty.Title>No line items</Empty.Title>
               <Empty.Description
-                >This entry has no task submissions.</Empty.Description
+                >This entry has no payable tasks.</Empty.Description
               >
             </Empty.Header>
           </Empty.Root>
         {:else}
-          <DataTable data={tableData} />
-          <Separator class="my-4" />
-          <div class="flex items-center justify-between">
-            <span class="font-medium">Total</span>
-            <span class="text-xl font-bold tabular-nums"
-              >{formatCurrency(entry.total_amount)}</span
-            >
-          </div>
+          <DataTable
+            data={tableData}
+            totalAmount={formatCurrency(entry.total_amount)}
+          />
+          <Pagination
+            page={lineItemsPage}
+            pageSize={lineItemsPageSize}
+            total={lineItemsTotal}
+            {loading}
+            pageSizeOptions={[10, 25, 50, 100]}
+            onchange={setLineItemsPage}
+            onpagesizechange={(size) => {
+              lineItemsPageSize = size;
+              setLineItemsPage(1);
+            }}
+          />
         {/if}
       </Card.Content>
-      {#if !loading && lineItems.length > 0}
-        <Card.Footer class="flex items-center gap-3">
-          {#if entry.status === "draft" || entry.status === "under_review"}
-            <Button onclick={handleApprove} class="gap-1.5">
-              <CheckIcon class="size-4" />
-              Approve Entry
-            </Button>
-            <p class="text-xs text-base-content/60">
-              Approving will verify this entry. All included tasks are already
-              closed.
-            </p>
-          {:else if entry.status === "approved"}
-            <Button onclick={handlePay} class="gap-1.5">
-              <BanknoteIcon class="size-4" />
-              Disburse Payment
-            </Button>
-            <p class="text-xs text-base-content/60">
-              Paying will write a ledger debit and notify the user.
-            </p>
-          {:else if entry.status === "paid"}
-            <div
-              class="flex items-center gap-1.5 text-sm text-base-content/60"
-            >
-              <CheckIcon
-                class="size-4 text-success"
-              />
-              Payment disbursed
-              {#if entry.approved_at}
-                · Approved {formatDate(entry.approved_at)}
-              {/if}
-            </div>
-          {/if}
-        </Card.Footer>
-      {/if}
     </Card.Root>
   {:else if loading}
     <Skeleton class="h-20 w-full" />

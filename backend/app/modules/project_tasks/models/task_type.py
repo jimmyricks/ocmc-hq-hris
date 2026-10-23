@@ -18,3 +18,4 @@ class TaskType(BaseModel):
     unit_rate: Mapped[float] = mapped_column(Numeric(12, 2), nullable=True, default=None)
     unit: Mapped[str] = mapped_column(String(100), nullable=True, default=None)
     requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=True, default=True)
+    submission_mode: Mapped[str] = mapped_column(String(20), nullable=True, default="link", server_default="link")

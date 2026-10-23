@@ -26,9 +26,7 @@
       "required": true,
       "default": "bi_monthly",
       "options": [
-        "bi_monthly",
-        "monthly",
-        "weekly"
+        "bi_monthly"
       ],
       "in_list_view": true
     },
@@ -44,7 +42,7 @@
       "label": "Default Period End Day",
       "field_type": "int",
       "required": true,
-      "default": 15
+      "default": 14
     },
     {
       "name": "auto_approve_threshold",

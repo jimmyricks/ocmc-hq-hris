@@ -7,6 +7,7 @@ Idempotent — skips existing role+entity combinations.
 SystemManager  → full CRUD + admin entities + in_sidebar
 Technician     → CRUD on operational entities (no admin), in_sidebar
 Viewer         → read-only on operational entities, in_sidebar
+HR             → payroll operations + read-only ledger, no operational entities
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -46,7 +47,6 @@ ADMIN_ENTITIES = [
     "error_log",
     "api_key",
     "user_session",
-    "ledger",
     "model",
     "model_definition",
     "entity_definition",
@@ -57,12 +57,19 @@ ADMIN_ENTITIES = [
     "workflow_transition",
     "module_order",
     "entity_order",
-    "payroll_line_item",
-    "payroll_period",
-    "payroll_entry",
-    "invoice",
-    "payroll_settings",
     "user_task_rate",
+]
+
+# Payroll entities — access is governed by per-role grants matching each
+# entity's declared "rbac" block: admins get full control, HR gets payroll
+# operations and read-only ledger access, other roles get nothing.
+PAYROLL_ENTITIES = [
+    "payroll_period",
+    "payroll_settings",
+    "payroll_entry",
+    "payroll_line_item",
+    "invoice",
+    "ledger",
 ]
 
 _FULL = dict(
@@ -83,6 +90,11 @@ _READ = dict(
 _NONE = dict(
     can_read=False, can_create=False, can_update=False, can_delete=False,
     can_select=False, can_export=False, can_import=False, in_sidebar=False,
+    row_scope=ROW_SCOPE_ALL,
+)
+_PAYROLL_OPS = dict(
+    can_read=True, can_create=True, can_update=True, can_delete=False,
+    can_select=True, can_export=True, can_import=False, in_sidebar=True,
     row_scope=ROW_SCOPE_ALL,
 )
 
@@ -111,14 +123,17 @@ async def seed_entity_permissions(db: AsyncSession) -> SeedResult:
                 setattr(permission, field, value)
     hr_role = roles.get("HR")
     if hr_role:
-        legacy_operational_grants = await db.scalars(
+        # HR gets global read-only visibility on operational entities.
+        # Re-assert _READ on existing rows so DBs seeded by older versions
+        # (which zeroed these grants) self-heal on the next seed run.
+        hr_operational_grants = await db.scalars(
             select(EntityPermission).where(
                 EntityPermission.role_id == hr_role.id,
                 EntityPermission.entity_name.in_(OPERATIONAL_ENTITIES),
             )
         )
-        for permission in legacy_operational_grants:
-            for field, value in _NONE.items():
+        for permission in hr_operational_grants:
+            for field, value in _READ.items():
                 setattr(permission, field, value)
 
     permission_matrix = []
@@ -128,7 +143,7 @@ async def seed_entity_permissions(db: AsyncSession) -> SeedResult:
         system_admin = roles.get(system_admin_name)
         if not system_admin:
             continue
-        for entity in OPERATIONAL_ENTITIES + ADMIN_ENTITIES:
+        for entity in OPERATIONAL_ENTITIES + ADMIN_ENTITIES + PAYROLL_ENTITIES:
             permission_matrix.append((system_admin, entity, _FULL))
 
     # Workspace supervisors: operational CRUD, no system administration.
@@ -160,6 +175,16 @@ async def seed_entity_permissions(db: AsyncSession) -> SeedResult:
     if viewer:
         for entity in OPERATIONAL_ENTITIES:
             permission_matrix.append((viewer, entity, _READ))
+
+    # HR: global read-only on operational entities plus payroll operations
+    # as declared in each entity's "rbac" block (read/create/update on
+    # payroll records, read-only on the ledger).
+    if hr_role:
+        for entity in OPERATIONAL_ENTITIES:
+            permission_matrix.append((hr_role, entity, _READ))
+        for entity in PAYROLL_ENTITIES:
+            perms = _READ if entity == "ledger" else _PAYROLL_OPS
+            permission_matrix.append((hr_role, entity, perms))
 
     for role, entity_name, perms in permission_matrix:
         existing = await db.execute(

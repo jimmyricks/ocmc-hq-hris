@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
+  import { onMount } from "svelte";
   import { toast } from "$lib/notifications";
-  import { listEntity, saveEntity, deleteEntity } from "$lib/api/index.js";
+  import { saveEntity, deleteEntity } from "$lib/api/index.js";
+  import { payrollApi } from "$lib/payroll/api.js";
   import { refCache } from "$lib/task-manager/ref-cache.js";
-  import { workspaceApi } from "$lib/workspaces/api.js";
-  import type { WorkspaceContext } from "$lib/workspaces/types.js";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Checkbox } from "$lib/components/ui/checkbox/index.js";
   import { Input as TextInput } from "$lib/components/ui/input/index.js";
@@ -13,6 +14,7 @@
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import PlusIcon from "@lucide/svelte/icons/plus";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import SearchIcon from "@lucide/svelte/icons/search";
   import XIcon from "@lucide/svelte/icons/x";
@@ -21,11 +23,12 @@
   interface TaskType {
     id: string;
     name: string;
-    workspace_id: string | null;
-    description: string | null;
-    unit_rate: number | null;
-    unit: string | null;
-    requires_approval: boolean;
+    workspace_id?: string | null;
+    description?: string | null;
+    unit_rate?: number | null;
+    unit?: string | null;
+    requires_approval?: boolean;
+    submission_mode?: string;
   }
 
   const UNIT_OPTIONS = [
@@ -35,11 +38,17 @@
     { value: "per_unit", label: "Per unit" },
   ];
 
+  const appState = useAppState();
   let records = $state<TaskType[]>([]);
-  let workspaceContext = $state<WorkspaceContext | null>(null);
+  const workspaceContext = $derived(appState.workspaceContext);
+  let recordsPage = $state(appState.tablePage("task-rates"));
+  let recordsPageSize = $state(25);
+  let recordsTotal = $state(0);
   let loading = $state(true);
   let error = $state("");
   let search = $state("");
+  let appliedSearch = $state("");
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let modalOpen = $state(false);
   let isEdit = $state(false);
   let editingId = $state<string | null>(null);
@@ -50,33 +59,33 @@
   let unitRate = $state("");
   let unit = $state("per_task");
   let requiresApproval = $state(true);
+  let submissionMode = $state("link");
 
   const canChooseWorkspace = $derived(
     Boolean(workspaceContext?.can_manage && workspaceContext.is_global),
   );
-  const filteredRecords = $derived(
-    records.filter((record) =>
-      `${record.name} ${workspaceName(record.workspace_id)}`
-        .toLowerCase()
-        .includes(search.trim().toLowerCase()),
-    ),
-  );
-
-  $effect(() => {
-    if (!browser) return;
-    loadData();
-    workspaceApi
-      .getContext()
-      .then((ctx) => (workspaceContext = ctx))
-      .catch((err) => console.error("Failed to load workspace context:", err));
+  onMount(() => {
+    void appState.ensureBoot();
+    void loadData(recordsPage);
+    return () => clearTimeout(searchTimer);
   });
 
-  async function loadData() {
+  async function loadData(page = recordsPage) {
     loading = true;
     error = "";
     try {
-      const res = await listEntity("task_type", 1, 100);
-      records = (res.data ?? []) as TaskType[];
+      const result = await payrollApi.getTaskTypesPage(
+        page,
+        recordsPageSize,
+        appliedSearch,
+      );
+      if (!result.items.length && result.total > 0 && page > 1) {
+        return loadData(Math.ceil(result.total / recordsPageSize));
+      }
+      records = result.items;
+      recordsTotal = result.total;
+      recordsPage = result.page;
+      appState.rememberTablePage("task-rates", recordsPage);
     } catch (err: any) {
       error = err.message || "Failed to load task types";
     } finally {
@@ -84,16 +93,30 @@
     }
   }
 
-  function workspaceName(id: string | null) {
+  function setRecordsPage(page: number) {
+    recordsPage = page;
+    appState.rememberTablePage("task-rates", page);
+    void loadData(page);
+  }
+
+  function queueSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      appliedSearch = search.trim();
+      setRecordsPage(1);
+    }, 300);
+  }
+
+  function workspaceName(id: string | null | undefined) {
     if (!id) return "Unassigned";
     return workspaceContext?.workspaces.find((w) => w.id === id)?.name ?? id;
   }
 
-  function workspaceColor(id: string | null) {
+  function workspaceColor(id: string | null | undefined) {
     return workspaceContext?.workspaces.find((w) => w.id === id)?.color;
   }
 
-  function unitLabel(value: string | null) {
+  function unitLabel(value: string | null | undefined) {
     return (
       UNIT_OPTIONS.find((option) => option.value === value)?.label ??
       value ??
@@ -101,7 +124,7 @@
     );
   }
 
-  function formatRate(value: number | null) {
+  function formatRate(value: number | null | undefined) {
     if (value === null || value === undefined) return "—";
     return `₱${Number(value).toLocaleString(undefined, {
       minimumFractionDigits: 2,
@@ -121,6 +144,7 @@
     unitRate = "";
     unit = "per_task";
     requiresApproval = true;
+    submissionMode = "link";
     modalOpen = true;
   }
 
@@ -133,6 +157,7 @@
     unitRate = record.unit_rate != null ? String(record.unit_rate) : "";
     unit = record.unit ?? "per_task";
     requiresApproval = record.requires_approval ?? true;
+    submissionMode = record.submission_mode ?? "link";
     modalOpen = true;
   }
 
@@ -158,6 +183,7 @@
         unit_rate: rate,
         unit,
         requires_approval: requiresApproval,
+        submission_mode: submissionMode,
       };
       if (isEdit && editingId) {
         await saveEntity("task_type", data, editingId);
@@ -168,7 +194,7 @@
         });
       }
       toast.success(isEdit ? "Task type updated" : "Task type created");
-      await loadData();
+      await loadData(recordsPage);
       refCache.invalidate("task_types");
       modalOpen = false;
     } catch (err: any) {
@@ -184,7 +210,7 @@
     try {
       await deleteEntity("task_type", editingId);
       toast.success("Task type deleted");
-      await loadData();
+      await loadData(recordsPage);
       refCache.invalidate("task_types");
       modalOpen = false;
     } catch (err: any) {
@@ -203,12 +229,11 @@
   />
 </svelte:head>
 
-<div class="rates-page">
-  <header class="rates-heading">
+<div class="flex flex-col gap-6">
+  <header class="flex flex-wrap items-end justify-between gap-4">
     <div>
-      <p class="eyebrow">Payroll setup</p>
-      <h1>Tasks &amp; Rates</h1>
-      <p class="rates-subtitle">
+      <h1 class="text-2xl font-bold tracking-tight">Tasks &amp; Rates</h1>
+      <p class="mt-1 text-sm text-base-content/60">
         Set consistent rates for the work each company delivers.
       </p>
     </div>
@@ -229,15 +254,15 @@
   >
     <Stats.Item>
       <Stats.Title>Task types</Stats.Title>
-      <Stats.Value class="tabular-nums">{records.length}</Stats.Value>
-      <Stats.Desc>in the current workspace view</Stats.Desc>
+      <Stats.Value class="tabular-nums">{recordsTotal}</Stats.Value>
+      <Stats.Desc>matching task types</Stats.Desc>
     </Stats.Item>
     <Stats.Item>
       <Stats.Title>Workspace rates</Stats.Title>
       <Stats.Value class="tabular-nums"
         >{records.filter((record) => record.workspace_id).length}</Stats.Value
       >
-      <Stats.Desc>assigned to a company</Stats.Desc>
+      <Stats.Desc>assigned on this page</Stats.Desc>
     </Stats.Item>
     <Stats.Item>
       <Stats.Title>Approval required</Stats.Title>
@@ -245,15 +270,22 @@
         >{records.filter((record) => record.requires_approval)
           .length}</Stats.Value
       >
-      <Stats.Desc>before payroll eligibility</Stats.Desc>
+      <Stats.Desc>on this page</Stats.Desc>
     </Stats.Item>
   </Stats.Root>
 
-  <section class="catalog-panel" aria-labelledby="catalog-title">
-    <div class="catalog-toolbar">
+  <section
+    class="overflow-hidden rounded-box border border-base-300 bg-base-100"
+    aria-labelledby="catalog-title"
+  >
+    <div
+      class="flex flex-wrap items-center justify-between gap-3 border-b border-base-300 p-4"
+    >
       <div>
-        <h2 id="catalog-title">Rate catalog</h2>
-        <p>Workspace ownership is fixed after a rate is created.</p>
+        <h2 id="catalog-title" class="font-semibold">Rate catalog</h2>
+        <p class="text-sm text-base-content/60">
+          Workspace ownership is fixed after a rate is created.
+        </p>
       </div>
       <div class="relative w-full sm:w-[min(17.5rem,40%)]">
         <SearchIcon
@@ -266,85 +298,106 @@
           aria-label="Search task types"
           size="sm"
           class="pl-9 pr-7"
+          oninput={queueSearch}
         />
         {#if search}
           <button
             type="button"
             aria-label="Clear search"
             class="absolute right-2 top-1/2 grid size-5 -translate-y-1/2 place-items-center text-base-content/60"
-            onclick={() => (search = "")}><XIcon size={16} /></button
+            onclick={() => {
+              search = "";
+              appliedSearch = "";
+              setRecordsPage(1);
+            }}><XIcon size={16} /></button
           >
         {/if}
       </div>
     </div>
 
     {#if error}
-      <div class="catalog-error" role="alert">
-        <strong>Could not load rates</strong>
-        <span>{error}</span>
-        <Button size="sm" onclick={loadData}>Try again</Button>
+      <div class="p-8 text-center" role="alert">
+        <p class="font-medium text-error">Could not load rates</p>
+        <p class="mt-1 text-sm text-base-content/60">{error}</p>
+        <Button size="sm" class="mt-4" onclick={() => loadData(recordsPage)}
+          >Try again</Button
+        >
       </div>
     {:else if loading}
-      <div class="catalog-loading" aria-live="polite">
-        <span class="loading-dot"></span>
+      <div
+        class="flex items-center justify-center gap-2 p-8 text-sm text-base-content/60"
+        aria-live="polite"
+      >
+        <span class="loading loading-spinner loading-sm"></span>
         Loading task rates…
       </div>
-    {:else if filteredRecords.length === 0}
-      <div class="catalog-empty">
-        <span class="empty-icon"><ListChecksIcon size={24} /></span>
-        <strong
-          >{search ? "No matching task types" : "No task types yet"}</strong
+    {:else if records.length === 0}
+      <div class="p-8 text-center">
+        <span
+          class="mx-auto mb-3 grid size-11 place-items-center rounded-box border border-base-300 bg-base-200 text-base-content/60"
         >
-        <p>
+          <ListChecksIcon size={22} />
+        </span>
+        <p class="font-medium">
+          {search ? "No matching task types" : "No task types yet"}
+        </p>
+        <p class="mx-auto mt-1 max-w-sm text-sm text-base-content/60">
           {search
             ? "Try another name or workspace."
             : "Add a task type to give your team a clear, consistent rate."}
         </p>
         {#if !search}
-          <Button variant="primary" size="sm" onclick={openCreate}>
+          <Button variant="primary" size="sm" class="mt-4" onclick={openCreate}>
             <PlusIcon size={16} />
             Add task type
           </Button>
         {/if}
       </div>
     {:else}
-      <div class="rates-table-wrap">
-        <table class="rates-table">
+      <div class="overflow-x-auto">
+        <table class="table table-zebra">
           <thead>
             <tr>
               <th scope="col">Task type</th>
               <th scope="col">Workspace</th>
-              <th scope="col" class="numeric">Rate</th>
+              <th scope="col" class="text-right">Rate</th>
               <th scope="col">Rate unit</th>
               <th scope="col">Approval</th>
               <th scope="col"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {#each filteredRecords as record (record.id)}
+            {#each records as record (record.id)}
               <tr>
                 <td>
                   <button
-                    class="task-name"
+                    class="flex min-w-0 cursor-pointer items-center gap-2.5 text-left"
                     type="button"
                     onclick={() => openEdit(record)}
                   >
-                    <span class="task-name__mark"
-                      >{record.name.slice(0, 1).toUpperCase()}</span
+                    <span
+                      class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-xs font-semibold text-primary"
                     >
-                    <span>
-                      <strong>{record.name}</strong>
+                      {record.name.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span class="min-w-0">
+                      <span class="block truncate font-medium"
+                        >{record.name}</span
+                      >
                       {#if record.description}
-                        <small>{record.description}</small>
+                        <span
+                          class="block max-w-64 truncate text-xs text-base-content/60"
+                          >{record.description}</span
+                        >
                       {/if}
                     </span>
                   </button>
                 </td>
                 <td>
-                  <span class="workspace-badge">
+                  <span class="inline-flex items-center gap-1.5">
                     {#if workspaceColor(record.workspace_id)}
                       <span
-                        class="workspace-badge__dot"
+                        class="size-2 rounded-sm"
                         style:background-color={workspaceColor(
                           record.workspace_id,
                         )}
@@ -353,33 +406,46 @@
                     {workspaceName(record.workspace_id)}
                   </span>
                 </td>
-                <td class="numeric rate-value"
+                <td class="text-right font-semibold tabular-nums"
                   >{formatRate(record.unit_rate)}</td
                 >
                 <td>{unitLabel(record.unit)}</td>
                 <td>
-                  <span
-                    class:approval-yes={record.requires_approval}
-                    class:approval-no={!record.requires_approval}
-                    class="approval-pill"
-                  >
-                    <span></span>
-                    {record.requires_approval ? "Required" : "Not required"}
-                  </span>
+                  {#if record.requires_approval}
+                    <span class="badge badge-sm badge-success badge-outline"
+                      >Required</span
+                    >
+                  {:else}
+                    <span class="badge badge-sm badge-ghost">Not required</span>
+                  {/if}
                 </td>
-                <td class="action-cell">
-                  <Button size="sm" onclick={() => openEdit(record)}
-                    >Edit</Button
+                <td class="text-right">
+                  <button
+                    class="btn btn-ghost btn-sm btn-square"
+                    type="button"
+                    aria-label="Edit task type"
+                    onclick={() => openEdit(record)}
                   >
+                    <PencilIcon size={15} />
+                  </button>
                 </td>
               </tr>
             {/each}
           </tbody>
         </table>
       </div>
-      <div class="catalog-footer">
-        Showing {filteredRecords.length} of {records.length} task types
-      </div>
+      <Pagination
+        page={recordsPage}
+        pageSize={recordsPageSize}
+        total={recordsTotal}
+        {loading}
+        pageSizeOptions={[10, 25, 50, 100]}
+        onchange={setRecordsPage}
+        onpagesizechange={(size) => {
+          recordsPageSize = size;
+          setRecordsPage(1);
+        }}
+      />
     {/if}
   </section>
 </div>
@@ -482,7 +548,8 @@
                 type="number"
                 min="0"
                 step="0.01"
-                bind:value={unitRate}
+                value={unitRate}
+                oninput={(event) => (unitRate = event.currentTarget.value)}
                 placeholder="0.00"
                 required
               />
@@ -513,6 +580,31 @@
             </Select.Root>
           </label>
         </div>
+
+        <label class="form-field">
+          <span>Submission format <b>*</b></span>
+          <Select.Root type="single" bind:value={submissionMode}>
+            <Select.Trigger
+              class="w-full"
+              aria-label="Submission format"
+              aria-required="true"
+            >
+              {submissionMode === "text" ? "Pasted text" : "External link"}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="link" label="External link">
+                External link
+              </Select.Item>
+              <Select.Item value="text" label="Pasted text">
+                Pasted text
+              </Select.Item>
+            </Select.Content>
+          </Select.Root>
+          <small>
+            Link tasks (reels, posters) take a URL; text tasks (articles,
+            captions) take pasted content at submission.
+          </small>
+        </label>
 
         <label class="approval-setting">
           <Checkbox class="mt-0.5" bind:checked={requiresApproval} />
@@ -548,17 +640,6 @@
 </Dialog.Root>
 
 <style>
-  .rates-page {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
-  }
-  .rates-heading {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 20px;
-  }
   .eyebrow {
     margin: 0 0 6px;
     color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
@@ -566,244 +647,6 @@
     font-weight: 750;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-  }
-  .rates-heading h1 {
-    margin: 0;
-    color: var(--color-base-content);
-    font-size: clamp(25px, 3vw, 32px);
-    font-weight: 700;
-    letter-spacing: -0.045em;
-  }
-  .rates-subtitle {
-    margin: 7px 0 0;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 13px;
-  }
-  .catalog-panel {
-    overflow: hidden;
-    border: 1px solid var(--color-base-300);
-    border-radius: 10px;
-    background: var(--color-base-100);
-  }
-  .catalog-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-    border-bottom: 1px solid var(--color-base-300);
-    padding: 17px 19px;
-  }
-  .catalog-toolbar h2 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
-  .catalog-toolbar p {
-    margin: 4px 0 0;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 11px;
-  }
-
-  .rates-table-wrap {
-    overflow-x: auto;
-  }
-  .rates-table {
-    width: 100%;
-    border-collapse: collapse;
-    text-align: left;
-    white-space: nowrap;
-  }
-  .rates-table th {
-    height: 41px;
-    border-bottom: 1px solid var(--color-base-300);
-    background: var(--color-base-200);
-    padding: 0 16px;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-  }
-  .rates-table td {
-    height: 62px;
-    border-bottom: 1px solid var(--color-base-300);
-    padding: 8px 16px;
-    color: var(--color-base-content);
-    font-size: 12px;
-  }
-  .rates-table tr:last-child td {
-    border-bottom: 0;
-  }
-  .rates-table tbody tr:hover {
-    background: var(--color-base-200);
-  }
-  .numeric {
-    text-align: right;
-  }
-  .rate-value {
-    color: var(--color-base-content) !important;
-    font-variant-numeric: tabular-nums;
-    font-weight: 700;
-  }
-  .task-name {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    border: 0;
-    background: transparent;
-    padding: 0;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .task-name__mark {
-    display: grid;
-    width: 32px;
-    height: 32px;
-    flex: none;
-    place-items: center;
-    border: 1px solid
-      color-mix(in oklab, var(--color-primary) 12%, var(--color-base-100));
-    border-radius: 8px;
-    background: color-mix(
-      in oklab,
-      var(--color-primary) 12%,
-      var(--color-base-100)
-    );
-    color: var(--color-primary);
-    font-size: 12px;
-    font-weight: 700;
-  }
-  .task-name strong,
-  .task-name small {
-    display: block;
-  }
-  .task-name strong {
-    color: var(--color-base-content);
-    font-size: 12px;
-    font-weight: 650;
-  }
-  .task-name small {
-    max-width: 280px;
-    overflow: hidden;
-    margin-top: 3px;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 10px;
-    text-overflow: ellipsis;
-  }
-  .workspace-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    color: var(--color-base-content);
-  }
-  .workspace-badge__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 3px;
-  }
-  .approval-pill {
-    display: inline-flex;
-    min-height: 24px;
-    align-items: center;
-    gap: 6px;
-    border: 1px solid var(--color-base-300);
-    border-radius: 999px;
-    padding: 0 8px;
-    font-size: 10px;
-    font-weight: 650;
-  }
-  .approval-pill > span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-  }
-  .approval-yes {
-    border-color: color-mix(
-      in oklab,
-      var(--color-success) 22%,
-      var(--color-base-100)
-    );
-    background: color-mix(
-      in oklab,
-      var(--color-success) 8%,
-      var(--color-base-100)
-    );
-    color: var(--color-success);
-  }
-  .approval-yes > span {
-    background: var(--color-success);
-  }
-  .approval-no {
-    background: var(--color-base-200);
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-  }
-  .approval-no > span {
-    background: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-  }
-  .action-cell {
-    width: 80px;
-    text-align: right;
-  }
-  .catalog-footer {
-    border-top: 1px solid var(--color-base-300);
-    padding: 11px 17px;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 10px;
-  }
-  .catalog-loading,
-  .catalog-empty,
-  .catalog-error {
-    display: flex;
-    min-height: 205px;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 13px;
-  }
-  .loading-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--color-primary);
-    animation: pulse 1s ease-in-out infinite alternate;
-  }
-  .catalog-empty {
-    flex-direction: column;
-    gap: 6px;
-    padding: 25px;
-    text-align: center;
-  }
-  .catalog-empty strong {
-    margin-top: 5px;
-    color: var(--color-base-content);
-    font-size: 14px;
-  }
-  .catalog-empty p {
-    max-width: 350px;
-    margin: 0 0 8px;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 12px;
-  }
-  .empty-icon {
-    display: grid;
-    width: 45px;
-    height: 45px;
-    place-items: center;
-    border: 1px solid var(--color-base-300);
-    border-radius: 12px;
-    background: var(--color-base-200);
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-  }
-  .catalog-error {
-    flex-direction: column;
-    color: var(--color-error);
-  }
-  .catalog-error span {
-    max-width: 600px;
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
   }
   .form-field {
     display: flex;
@@ -870,21 +713,7 @@
     font-weight: 450;
     line-height: 1.45;
   }
-  @keyframes pulse {
-    to {
-      opacity: 0.35;
-      transform: scale(0.75);
-    }
-  }
   @media (max-width: 680px) {
-    .rates-heading {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-    .catalog-toolbar {
-      align-items: stretch;
-      flex-direction: column;
-    }
     .form-grid {
       grid-template-columns: 1fr;
     }

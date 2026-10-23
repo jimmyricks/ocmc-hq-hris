@@ -10,12 +10,16 @@ from typing import Any, Optional, Protocol, runtime_checkable
 class WorkflowRepositoryProtocol(Protocol):
     """Interface for workflow data access."""
 
-    async def get_workflow(self, entity: str) -> Optional[Any]:
-        """Get workflow configuration for an entity."""
+    async def get_workflow(
+        self, entity: str, workspace_id: Optional[str] = None
+    ) -> Optional[Any]:
+        """Get workflow configuration for an entity and optional workspace."""
         ...
 
-    async def get_initial_state(self, entity: str) -> Optional[str]:
-        """Get the initial workflow state slug for an entity."""
+    async def get_initial_state(
+        self, entity: str, workspace_id: Optional[str] = None
+    ) -> Optional[str]:
+        """Get the initial workflow state slug for an entity and workspace."""
         ...
 
     async def get_available_actions(
@@ -24,6 +28,9 @@ class WorkflowRepositoryProtocol(Protocol):
         current_state: str,
         user: Any = None,
         record_id: str = None,
+        workspace_id: Optional[str] = None,
+        workflow: Any = None,
+        doc: Any = None,
     ) -> list[dict[str, Any]]:
         """Get available workflow actions from the current state."""
         ...
@@ -35,6 +42,9 @@ class WorkflowRepositoryProtocol(Protocol):
         action: str,
         user: Any = None,
         record_id: str = None,
+        workspace_id: Optional[str] = None,
+        workflow: Any = None,
+        doc: Any = None,
     ) -> tuple[bool, Optional[str], Optional[str]]:
         """Validate a workflow transition. Returns (is_valid, target_state, error_message)."""
         ...

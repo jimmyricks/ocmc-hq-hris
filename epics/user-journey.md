@@ -16,7 +16,7 @@ title: OCMC HQ User Journey
 
 1. **Sign in** — User authenticates and lands in the workspace. API actions are checked against assigned roles and permissions.
 2. **Set up work** — A PM creates a project, adds members, creates tasks, and assigns an employee. Assignment moves a pending task to in progress and creates an in-app notification; the dedicated assignment endpoint also queues an email to the assignee.
-3. **Do the work** — Employee opens My Tasks, uses the task details and comments thread, then submits notes or a work link. The submission is versioned, the task moves to for review, and the project manager receives an in-app notification.
+3. **Do the work** — Employee opens My Tasks, uses the task details and comments thread, then submits notes plus the deliverable required by the task type (a link or pasted text). The submission is versioned, the task's current deliverable link is updated, the task moves to for review, and the project manager receives an in-app notification. Other active project members can see the task, its active assignee, and the current deliverable.
 4. **Review** — PM approves, rejects, or requests revisions. Rejected work returns to in progress; revision requests require remarks. Approval records the decision, credits the employee ledger, and notifies the employee.
 5. **Run payroll** — HR creates a date-range period and generates payroll from approved submissions in that period. The system groups line items by employee, applies each task type's rate, totals entries, and closes approved tasks.
 6. **Approve and pay** — HR approves and pays each entry. Payment creates an invoice and ledger debit, and notifies the employee. A period is marked paid only after all its entries are paid.

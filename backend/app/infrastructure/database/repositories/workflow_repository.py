@@ -33,33 +33,140 @@ class WorkflowRepository:
                     seen_ids.add(transition.id)
         return transitions
 
-    async def get_workflow(self, entity: str) -> Optional[Workflow]:
+    def _workflow_options(self):
+        return (
+            selectinload(Workflow.state_links).selectinload(WorkflowStateLink.state),
+            selectinload(Workflow.state_links)
+            .selectinload(WorkflowStateLink.outgoing_transitions)
+            .selectinload(WorkflowTransition.from_state_link)
+            .selectinload(WorkflowStateLink.state),
+            selectinload(Workflow.state_links)
+            .selectinload(WorkflowStateLink.outgoing_transitions)
+            .selectinload(WorkflowTransition.to_state_link)
+            .selectinload(WorkflowStateLink.state),
+            selectinload(Workflow.state_links)
+            .selectinload(WorkflowStateLink.outgoing_transitions)
+            .selectinload(WorkflowTransition.action_ref),
+        )
+
+    async def get_workflow(
+        self, entity: str, workspace_id: Optional[str] = None
+    ) -> Optional[Workflow]:
+        """Return the active workflow for a scope, preferring its explicit default."""
+        if workspace_id:
+            result = await self.db.execute(
+                select(Workflow)
+                .where(
+                    Workflow.target_entity == entity,
+                    Workflow.workspace_id == workspace_id,
+                    Workflow.is_active == True,
+                )
+                .options(*self._workflow_options())
+                .order_by(
+                    Workflow.is_default.desc(),
+                    Workflow.updated_at.desc(),
+                    Workflow.created_at.asc(),
+                )
+            )
+            workflow = result.scalars().first()
+            if workflow:
+                return workflow
+
         result = await self.db.execute(
             select(Workflow)
-            .where(Workflow.target_entity == entity, Workflow.is_active == True)
-            .options(
-                selectinload(Workflow.state_links).selectinload(WorkflowStateLink.state),
-                selectinload(Workflow.state_links)
-                .selectinload(WorkflowStateLink.outgoing_transitions)
-                .selectinload(WorkflowTransition.from_state_link)
-                .selectinload(WorkflowStateLink.state),
-                selectinload(Workflow.state_links)
-                .selectinload(WorkflowStateLink.outgoing_transitions)
-                .selectinload(WorkflowTransition.to_state_link)
-                .selectinload(WorkflowStateLink.state),
-                selectinload(Workflow.state_links)
-                .selectinload(WorkflowStateLink.outgoing_transitions)
-                .selectinload(WorkflowTransition.action_ref),
+            .where(
+                Workflow.target_entity == entity,
+                Workflow.workspace_id.is_(None),
+                Workflow.is_active == True,
             )
+            .options(*self._workflow_options())
+            .order_by(Workflow.created_at.asc())
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
-    async def get_initial_state(self, entity: str) -> Optional[str]:
-        workflow = await self.get_workflow(entity)
+    async def get_initial_state(
+        self, entity: str, workspace_id: Optional[str] = None
+    ) -> Optional[str]:
+        workflow = await self.get_workflow(entity, workspace_id=workspace_id)
         if not workflow:
             return None
         initial_link = next((sl for sl in workflow.state_links if sl.is_initial), None)
         return initial_link.state.slug if initial_link else None
+
+    def resolve_state_slug(self, workflow: Workflow, current_state: str) -> str:
+        """Resolve a persisted or legacy status to a linked workflow state."""
+        return self._resolve_state_slug(workflow, current_state)
+
+    def _resolve_state_slug(self, workflow: Workflow, current_state: str) -> str:
+        """Map legacy task statuses onto workspace workflow slugs when needed."""
+        if not current_state:
+            return current_state
+        linked_states = {
+            link.state.slug for link in workflow.state_links if link.state
+        }
+        if current_state in linked_states:
+            return current_state
+        legacy_aliases = {
+            "draft_assigned": "draft",
+            "in_progress": "pending",
+            "for_review": "for_approval",
+            "closed": "done",
+        }
+        alias = legacy_aliases.get(current_state)
+        return alias if alias in linked_states else current_state
+
+    async def _get_doc(self, entity: str, record_id: str | None, doc: Any = None) -> Any:
+        if doc is not None or not record_id:
+            return doc
+        from app.infrastructure.database.repositories.entity_repository import get_entity_model
+
+        model = get_entity_model(entity)
+        if not model:
+            return None
+        result = await self.db.execute(select(model).where(model.id == record_id))
+        return result.scalar_one_or_none()
+
+    async def _get_effective_roles(self, user: Any, doc: Any = None) -> set[str]:
+        """Combine global RBAC roles with the user's role in the record workspace."""
+        roles = set(getattr(user, "roles", []) or []) if user else set()
+        workspace_id = getattr(doc, "workspace_id", None) if doc else None
+        if not workspace_id or not user:
+            return roles
+
+        from app.modules.workspaces.models import WorkspaceMembership
+
+        membership_role = await self.db.scalar(
+            select(WorkspaceMembership.membership_role).where(
+                WorkspaceMembership.workspace_id == workspace_id,
+                WorkspaceMembership.user_id == user.id,
+                WorkspaceMembership.membership_role == "supervisor",
+                WorkspaceMembership.is_active == True,
+            )
+        )
+        if membership_role:
+            roles.add(membership_role)
+            roles.add(f"workspace:{membership_role}")
+
+        project_id = getattr(doc, "project_id", None)
+        if project_id:
+            from app.modules.project_tasks.models import Project, ProjectMember
+
+            project = await self.db.get(Project, project_id)
+            project_member_role = await self.db.scalar(
+                select(ProjectMember.role).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user.id,
+                    ProjectMember.is_active.is_(True),
+                )
+            )
+            if project_member_role or (project and project.manager_id == user.id):
+                role = project_member_role or "manager"
+                roles.add(f"project:{role}")
+                if role == "manager":
+                    roles.add("workspace:supervisor")
+                else:
+                    roles.add("workspace:member")
+        return roles
 
     async def get_available_actions(
         self,
@@ -67,39 +174,104 @@ class WorkflowRepository:
         current_state: str,
         user: Any = None,
         record_id: str = None,
+        workspace_id: Optional[str] = None,
+        workflow: Optional[Workflow] = None,
+        doc: Any = None,
     ) -> list[dict[str, Any]]:
-        workflow = await self.get_workflow(entity)
+        doc = await self._get_doc(entity, record_id, doc)
+        if not workspace_id:
+            workspace_id = getattr(doc, "workspace_id", None)
+        if workflow is None:
+            workflow = await self.get_workflow(entity, workspace_id=workspace_id)
         if not workflow:
             return []
-        user_roles = set(getattr(user, 'roles', []) or []) if user else set()
-        is_super = 'SystemManager' in user_roles if user_roles else False
-        
-        # Fetch entity record to check ownership if record_id is provided
-        doc = None
-        if record_id:
-            from app.infrastructure.database.repositories.entity_repository import get_entity_model
-            model = get_entity_model(entity)
-            if model:
-                result = await self.db.execute(select(model).where(model.id == record_id))
-                doc = result.scalar_one_or_none()
-        
+
+        user_roles = await self._get_effective_roles(user, doc)
+        is_super = bool(
+            user
+            and (
+                getattr(user, "is_superuser", False)
+                or "SystemManager" in user_roles
+                or "Administrator" in user_roles
+            )
+        )
+
+        current_state = self._resolve_state_slug(workflow, current_state)
         available = []
-        for t in self._get_workflow_transitions(workflow):
-            if t.from_state_link.state.slug == current_state:
-                roles = t.get_allowed_roles()
-                if is_super or can_act_on_transition(
-                    roles,
-                    list(user_roles),
-                    created_by=str(doc.created_by) if doc else "",
-                    current_user_id=str(user.id) if user else "",
-                ):
-                    available.append({
-                        "action_slug": t.action_ref.slug,
-                        "action_label": t.action_ref.label,
-                        "to_state_slug": t.to_state_link.state.slug,
-                        "to_state_label": t.to_state_link.state.label,
-                    })
+        for transition in self._get_workflow_transitions(workflow):
+            if (
+                not transition.action_ref
+                or transition.from_state_link.state.slug != current_state
+            ):
+                continue
+            roles = transition.get_allowed_roles()
+            if is_super or can_act_on_transition(
+                roles,
+                list(user_roles),
+                created_by=str(doc.created_by) if doc else "",
+                current_user_id=str(user.id) if user else "",
+            ):
+                available.append(
+                    {
+                        "action_slug": transition.action_ref.slug,
+                        "action_label": transition.action_ref.label,
+                        "to_state_slug": transition.to_state_link.state.slug,
+                        "to_state_label": transition.to_state_link.state.label,
+                    }
+                )
         return available
+
+    async def find_transition(
+        self,
+        entity: str,
+        current_state: str,
+        action: str,
+        user: Any = None,
+        record_id: str = None,
+        workspace_id: Optional[str] = None,
+        workflow: Optional[Workflow] = None,
+        doc: Any = None,
+    ) -> Tuple[Optional[WorkflowTransition], Optional[str]]:
+        doc = await self._get_doc(entity, record_id, doc)
+        if not workspace_id:
+            workspace_id = getattr(doc, "workspace_id", None)
+        if workflow is None:
+            workflow = await self.get_workflow(entity, workspace_id=workspace_id)
+        if not workflow:
+            return None, f"No workflow found for entity '{entity}'"
+
+        user_roles = await self._get_effective_roles(user, doc)
+        is_super = bool(
+            user
+            and (
+                getattr(user, "is_superuser", False)
+                or "SystemManager" in user_roles
+                or "Administrator" in user_roles
+            )
+        )
+
+        current_state = self._resolve_state_slug(workflow, current_state)
+        for transition in self._get_workflow_transitions(workflow):
+            if (
+                not transition.action_ref
+                or transition.from_state_link.state.slug != current_state
+                or transition.action_ref.slug != action
+            ):
+                continue
+            roles = transition.get_allowed_roles()
+            if is_super or can_act_on_transition(
+                roles,
+                list(user_roles),
+                created_by=str(doc.created_by) if doc else "",
+                current_user_id=str(user.id) if user else "",
+            ):
+                return transition, None
+            return (
+                None,
+                "You do not have permission to perform "
+                f"'{action}'. Required roles: {', '.join(roles)}",
+            )
+        return None, f"Action '{action}' not available from state '{current_state}'"
 
     async def validate_transition(
         self,
@@ -108,38 +280,30 @@ class WorkflowRepository:
         action: str,
         user: Any = None,
         record_id: str = None,
+        workspace_id: Optional[str] = None,
         workflow: Optional[Workflow] = None,
         doc: Any = None,
     ) -> Tuple[bool, Optional[str], Optional[str]]:
-        if workflow is None:
-            workflow = await self.get_workflow(entity)
-        if not workflow:
-            return False, None, f"No workflow found for entity '{entity}'"
-        user_roles = set(getattr(user, 'roles', []) or []) if user else set()
-        is_super = 'SystemManager' in user_roles if user_roles else False
-        
-        # Fetch entity record to check ownership if record_id is provided
-        if doc is None and record_id:
-            from app.infrastructure.database.repositories.entity_repository import get_entity_model
-            model = get_entity_model(entity)
-            if model:
-                result = await self.db.execute(select(model).where(model.id == record_id))
-                doc = result.scalar_one_or_none()
-        
-        for t in self._get_workflow_transitions(workflow):
-            if t.from_state_link.state.slug == current_state and t.action_ref.slug == action:
-                roles = t.get_allowed_roles()
-                if is_super or can_act_on_transition(
-                    roles,
-                    list(user_roles),
-                    created_by=str(doc.created_by) if doc else "",
-                    current_user_id=str(user.id) if user else "",
-                ):
-                    return True, t.to_state_link.state.slug, None
-                return False, None, f"You do not have permission to perform '{action}'. Required roles: {', '.join(roles)}"
-        return False, None, f"Action '{action}' not available from state '{current_state}'"
+        transition, error = await self.find_transition(
+            entity,
+            current_state,
+            action,
+            user,
+            record_id,
+            workspace_id=workspace_id,
+            workflow=workflow,
+            doc=doc,
+        )
+        if not transition:
+            return False, None, error
+        return True, transition.to_state_link.state.slug, None
 
-    async def build_workflow_meta_dict(self, entity: str, json_workflow_meta: Any = None) -> Optional[dict]:
+    async def build_workflow_meta_dict(
+        self,
+        entity: str,
+        json_workflow_meta: Any = None,
+        workspace_id: Optional[str] = None,
+    ) -> Optional[dict]:
         """Build the workflow metadata dict for an entity.
         Falls back to JSON workflow config when no DB workflow exists.
         Pass show_actions=False in the JSON workflow config to display a read-only
@@ -192,7 +356,7 @@ class WorkflowRepository:
         # show_actions from JSON meta (default True — show buttons)
         show_actions = getattr(json_workflow_meta, 'show_actions', True) if json_workflow_meta else True
 
-        workflow = await self.get_workflow(entity)
+        workflow = await self.get_workflow(entity, workspace_id=workspace_id)
 
         if workflow and workflow.is_active:
             initial_link = next((sl for sl in workflow.state_links if sl.is_initial), None)

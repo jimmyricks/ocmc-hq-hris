@@ -31,15 +31,13 @@ export const workspaceApi = {
   async assignMember(
     workspaceId: string,
     userId: string,
-    membershipRole: "member" | "supervisor",
-    isHome: boolean,
+    membershipRole: "supervisor",
   ): Promise<void> {
     await apiJSON(`/api/workspaces/${workspaceId}/memberships`, {
       method: "POST",
       body: JSON.stringify({
         user_id: userId,
         membership_role: membershipRole,
-        is_home: isHome,
       }),
     });
   },
@@ -49,7 +47,7 @@ export const workspaceApi = {
     return (res.data ?? []) as Array<{
       id: string;
       user_id: string;
-      membership_role: "member" | "supervisor";
+      membership_role: "supervisor";
       is_home: boolean;
     }>;
   },

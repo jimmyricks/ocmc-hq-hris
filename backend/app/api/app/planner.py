@@ -48,6 +48,7 @@ class PlannerEventCreate(BaseModel):
     ends_at: datetime
     timezone: str | None = None
     all_day: bool = False
+    artist_portal_visible: bool = False
     resource_id: str | None = None
 
 
@@ -63,6 +64,7 @@ class PlannerEventUpdate(BaseModel):
     ends_at: datetime | None = None
     timezone: str | None = None
     all_day: bool | None = None
+    artist_portal_visible: bool | None = None
     status: Literal["scheduled", "cancelled", "completed"] | None = None
 
 
@@ -82,6 +84,7 @@ class ScheduleSeriesCreate(BaseModel):
     interval: int = Field(default=1, ge=1, le=52)
     weekdays: list[int] = Field(default_factory=list)
     timezone: str | None = None
+    artist_portal_visible: bool = False
     resource_id: str | None = None
 
 
@@ -819,6 +822,7 @@ async def create_planner_event(
         ends_at=ends_at,
         timezone=zone.key,
         all_day=payload.all_day,
+        artist_portal_visible=payload.artist_portal_visible,
         created_by=current_user.id,
         last_modified_by=current_user.id,
     )
@@ -1127,6 +1131,7 @@ async def create_schedule_series(
         ends_at=_to_utc_naive(local_end, zone),
         until_date=payload.until_date,
         timezone=zone.key,
+        artist_portal_visible=payload.artist_portal_visible,
         created_by=current_user.id,
         last_modified_by=current_user.id,
     )

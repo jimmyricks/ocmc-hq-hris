@@ -74,12 +74,15 @@
       "required": true,
       "default": "pending",
       "options": [
+        "draft",
         "pending",
         "in_progress",
+        "for_approval",
         "for_review",
         "submitted",
         "needs_revision",
         "approved",
+        "done",
         "closed",
         "cancelled"
       ],
@@ -89,6 +92,26 @@
       "name": "due_date",
       "label": "Due Date",
       "field_type": "datetime"
+    },
+    {
+      "name": "artist_portal_kind",
+      "label": "Artist Portal Item Type",
+      "field_type": "select",
+      "required": false,
+      "options": ["song", "milestone"]
+    },
+    {
+      "name": "public_summary",
+      "label": "Artist-facing Summary",
+      "field_type": "text",
+      "required": false
+    },
+    {
+      "name": "integration_kind",
+      "label": "Bahandi Integration",
+      "field_type": "select",
+      "required": false,
+      "options": ["press_release"]
     }
   ],
   "rbac": {

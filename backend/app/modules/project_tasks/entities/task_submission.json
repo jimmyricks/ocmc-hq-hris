@@ -71,6 +71,13 @@
       "field_type": "string",
       "required": false,
       "description": "URL to externally hosted deliverable (e.g. Google Drive)"
+    },
+    {
+      "name": "content",
+      "label": "Content",
+      "field_type": "text",
+      "required": false,
+      "description": "Pasted text deliverable (e.g. article or caption) for text-mode task types"
     }
   ],
   "rbac": {

@@ -268,8 +268,13 @@ async def test_assign_task_and_list_assignments(
 
 
 @pytest.mark.asyncio
-async def test_task_status_update(superuser_client, admin_id, record_id_factory):
-    """Assert a task status can be updated through the generic entity action endpoint."""
+async def test_task_status_update(
+    superuser_client, admin_id, record_id_factory, db_session
+):
+    """Assert task status changes use an authorized workflow transition."""
+    from app.core.seeds.workflows import seed_workflows
+
+    await seed_workflows(db_session)
     project_resp = await superuser_client.post(
         "/api/entity/project",
         json={
@@ -305,10 +310,23 @@ async def test_task_status_update(superuser_client, admin_id, record_id_factory)
         f"/api/entity/task/{task_id}",
         json={"data": {"status": "in_progress"}},
     )
-    assert update_resp.json()["status"] == "success"
+    assert update_resp.json()["status"] == "error"
+
+    workflow_resp = await superuser_client.post(
+        "/api/entity/task/workflow",
+        json={"id": task_id, "action": "start"},
+    )
+    assert workflow_resp.json()["status"] == "success"
 
     detail_resp = await superuser_client.get(f"/api/entity/task/detail/{task_id}")
-    assert detail_resp.json()["data"]["status"] == "in_progress"
+    assert detail_resp.json()["data"]["status"] == "pending"
+
+    lifecycle_resp = await superuser_client.post(
+        "/api/entity/task/workflow",
+        json={"id": task_id, "action": "submit_for_review"},
+    )
+    assert lifecycle_resp.json()["status"] == "error"
+    assert "submission/review endpoints" in lifecycle_resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -652,3 +670,257 @@ async def test_workspace_admin_assigns_scoped_memberships_and_maps_legacy_projec
     assert all(
         workspace["can_manage"] for workspace in context_data["workspaces"]
     )
+
+
+@pytest.mark.asyncio
+async def test_project_member_candidates_support_cross_workspace_users(
+    client, db_session, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    from jose import jwt
+    from sqlalchemy import select
+
+    from app.core.config import settings
+    from app.core.framework.models.auth import User
+    from app.modules.project_tasks.models import Project, ProjectMember, Task, TaskType
+    from app.modules.workspaces.models import WorkspaceMembership
+
+    supervisor = User(
+        id=str(uuid4()),
+        username="candidate-supervisor",
+        email="candidate-supervisor@example.test",
+        full_name="Candidate Supervisor",
+        hashed_password="unused",
+        is_active=True,
+    )
+    collaborator = User(
+        id=str(uuid4()),
+        username="external-collaborator",
+        email="external-collaborator@example.test",
+        full_name="External Collaborator",
+        hashed_password="unused",
+        is_active=True,
+    )
+    outside_supervisor = User(
+        id=str(uuid4()),
+        username="outside-supervisor",
+        email="outside-supervisor@example.test",
+        full_name="Outside Supervisor",
+        hashed_password="unused",
+        is_active=True,
+    )
+    inactive_user = User(
+        id=str(uuid4()),
+        username="inactive-collaborator",
+        email="inactive-collaborator@example.test",
+        full_name="Inactive Collaborator",
+        hashed_password="unused",
+        is_active=False,
+    )
+    regular_member = User(
+        id=str(uuid4()),
+        username="regular-member",
+        email="regular-member@example.test",
+        full_name="Regular Member",
+        hashed_password="unused",
+        is_active=True,
+    )
+    project = Project(
+        id=f"project-{uuid4().hex[:12]}",
+        workspace_id="workspace-oc-music-school",
+        name="Cross-workspace project",
+        status="active",
+    )
+    db_session.add_all(
+        [
+            supervisor,
+            collaborator,
+            outside_supervisor,
+            inactive_user,
+            regular_member,
+            project,
+        ]
+    )
+    await db_session.flush()
+    db_session.add_all(
+        [
+            WorkspaceMembership(
+                id=str(uuid4()),
+                workspace_id="workspace-oc-music-school",
+                user_id=supervisor.id,
+                membership_role="supervisor",
+                is_home=True,
+                is_active=True,
+            ),
+            WorkspaceMembership(
+                id=str(uuid4()),
+                workspace_id="workspace-bahandi",
+                user_id=outside_supervisor.id,
+                membership_role="supervisor",
+                is_home=True,
+                is_active=True,
+            ),
+            WorkspaceMembership(
+                id=str(uuid4()),
+                workspace_id="workspace-bahandi",
+                user_id=inactive_user.id,
+                membership_role="member",
+                is_home=True,
+                is_active=True,
+            ),
+            WorkspaceMembership(
+                id=str(uuid4()),
+                workspace_id="workspace-oc-music-school",
+                user_id=regular_member.id,
+                membership_role="member",
+                is_home=True,
+                is_active=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    def auth_headers(user: User, workspace_id: str) -> dict[str, str]:
+        token = jwt.encode(
+            {
+                "sub": user.username,
+                "user_id": user.id,
+                "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+            },
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM,
+        )
+        return {
+            "Authorization": f"Bearer {token}",
+            "X-Workspace-ID": workspace_id,
+        }
+
+    response = await client.get(
+        f"/api/project-tasks/projects/{project.id}/member-candidates",
+        headers=auth_headers(supervisor, project.workspace_id),
+    )
+    assert response.status_code == 200
+    candidates = {row["id"]: row for row in response.json()["data"]}
+    assert collaborator.id in candidates
+    assert inactive_user.id not in candidates
+    assert candidates[collaborator.id]["memberships"] == []
+    assert {
+        membership["workspace_name"]
+        for membership in candidates[outside_supervisor.id]["memberships"]
+    } == {"Bahandi Entertainment"}
+    db_session.add_all(
+        [
+            ProjectMember(
+                id=str(uuid4()),
+                project_id=project.id,
+                user_id=regular_member.id,
+                role="member",
+                is_active=True,
+            ),
+            ProjectMember(
+                id=str(uuid4()),
+                project_id=project.id,
+                user_id=outside_supervisor.id,
+                role="member",
+                is_active=False,
+            ),
+        ]
+    )
+    await db_session.flush()
+    directory = await client.get(
+        "/api/workspaces/directory",
+        params={
+            "search": "Regular",
+            "project_id": project.id,
+            "page": 1,
+            "page_size": 1,
+        },
+        headers=auth_headers(supervisor, project.workspace_id),
+    )
+    assert directory.status_code == 200
+    assert [user["id"] for user in directory.json()["data"]] == [
+        regular_member.id
+    ]
+    assert directory.json()["total"] == 1
+
+    denied = await client.get(
+        f"/api/project-tasks/projects/{project.id}/member-candidates",
+        headers=auth_headers(regular_member, project.workspace_id),
+    )
+    assert denied.status_code == 403
+
+    create_member = await client.post(
+        "/api/entity/project_member",
+        json={
+            "data": {
+                "project_id": project.id,
+                "user_id": collaborator.id,
+                "role": "manager",
+            }
+        },
+        headers=auth_headers(supervisor, project.workspace_id),
+    )
+    assert create_member.status_code in {200, 201}
+    membership = await db_session.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project.id,
+            ProjectMember.user_id == collaborator.id,
+        )
+    )
+    assert membership is not None
+    assert membership.role == "manager"
+
+    db_session.add(
+        ProjectMember(
+            id=str(uuid4()),
+            project_id=project.id,
+            user_id=regular_member.id,
+            role="member",
+            is_active=True,
+        )
+    )
+    task_type = TaskType(
+        id=f"task-type-{uuid4().hex[:12]}",
+        workspace_id=project.workspace_id,
+        name="Cross-workspace assignment",
+        unit="per_task",
+        unit_rate=50,
+        requires_approval=True,
+    )
+    task = Task(
+        id=f"task-{uuid4().hex[:12]}",
+        project_id=project.id,
+        workspace_id=project.workspace_id,
+        task_type_id=task_type.id,
+        title="Assigned to workspace-free user",
+        status="pending",
+    )
+    db_session.add_all([task_type, task])
+    await db_session.flush()
+
+    from app.api.app import project_tasks as project_tasks_api
+
+    assignment_email = AsyncMock()
+    monkeypatch.setattr(
+        project_tasks_api, "send_task_assignment_email", assignment_email
+    )
+    assignment = await client.post(
+        f"/api/project-tasks/tasks/{task.id}/assign",
+        json={"user_id": regular_member.id},
+        headers=auth_headers(collaborator, project.workspace_id),
+    )
+    assert assignment.status_code == 200
+    assert assignment.json()["data"]["user_id"] == regular_member.id
+    assignment_email.assert_awaited_once_with(task.id, regular_member.id)
+
+    project_directory = await client.get(
+        "/api/workspaces/directory",
+        params={"project_id": project.id, "search": "External"},
+        headers=auth_headers(collaborator, project.workspace_id),
+    )
+    assert project_directory.status_code == 200
+    assert [user["id"] for user in project_directory.json()["data"]] == [
+        collaborator.id
+    ]

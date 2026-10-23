@@ -221,15 +221,17 @@
 </svelte:head>
 
 <div class="dashboard flex flex-col gap-6 sm:gap-8">
-  <section
-    class="flex flex-col justify-between gap-5 sm:flex-row sm:items-center"
-  >
-    <div class="space-y-2">
-      <p class="eyebrow">{dateLabel}</p>
-      <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
+  <section class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+    <div>
+      <p
+        class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60"
+      >
+        {dateLabel}
+      </p>
+      <h1 class="mt-2 text-2xl font-bold tracking-tight">
         Good day, {firstName}<span class="greeting-mark">.</span>
       </h1>
-      <p class="max-w-xl text-sm text-base-content/60 sm:text-base">
+      <p class="mt-1 max-w-xl text-sm text-base-content/60">
         Here's what's moving across your team today.
       </p>
     </div>
@@ -560,14 +562,6 @@
 <style>
   .dashboard {
     animation: arrive 420ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
-  }
-
-  .eyebrow {
-    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
   }
 
   .greeting-mark {

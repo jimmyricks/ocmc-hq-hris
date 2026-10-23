@@ -30,6 +30,9 @@ from app.application.services.workflows.workflow_service import WorkflowAppServi
 from app.api.dependencies import get_row_scope_service, get_workflow_service
 from app.application.services.access_control.row_scope_service import RowScopeService
 from app.infrastructure.database.repositories.entity_repository import get_entity_model
+from app.infrastructure.database.repositories.workflow_repository import WorkflowRepository
+from app.modules.workspaces.models import Workspace
+from app.modules.workspaces.services import WorkspaceService
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 
@@ -40,6 +43,7 @@ async def get_workflow_transitions(
     current_state: Optional[str] = Query(None),
     record_id: Optional[str] = Query(None),
     authorization: Optional[str] = Header(None),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
     db: AsyncSession = Depends(get_db),
     workflow_service: WorkflowAppService = Depends(get_workflow_service),
     row_scope_service: RowScopeService = Depends(get_row_scope_service),
@@ -51,6 +55,14 @@ async def get_workflow_transitions(
     from app.core.security import get_current_user_from_token
     
     user = await get_current_user_from_token(authorization, db)
+    if user.id == "anonymous":
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    context = await _workflow_scope_context(
+        db, current_user=user, requested_workspace_id=workspace_id
+    )
+    record = None
+    record_workspace_id = None
     if record_id:
         model = get_entity_model(entity)
         record = await db.get(model, record_id) if model else None
@@ -63,10 +75,14 @@ async def get_workflow_transitions(
             user.is_superuser,
         ):
             raise HTTPException(status_code=403, detail="Permission denied")
+        record_workspace_id = getattr(record, "workspace_id", None)
+    scope_workspace_id = record_workspace_id or context.active_workspace_id
     
     if not current_state:
         # Get initial state if no current state provided
-        initial_state = await workflow_service.get_initial_state(entity)
+        initial_state = await workflow_service.get_initial_state(
+            entity, workspace_id=scope_workspace_id
+        )
         current_state = initial_state
     else:
         current_state = generate_slug(current_state)
@@ -79,7 +95,13 @@ async def get_workflow_transitions(
         )
     
     # Get available transitions
-    transitions = await workflow_service.get_available_actions(entity, current_state, user, record_id)
+    transitions = await workflow_service.get_available_actions(
+        entity,
+        current_state,
+        user,
+        record_id,
+        workspace_id=scope_workspace_id,
+    )
     
     return api_response(
         status="success",
@@ -98,6 +120,121 @@ def api_response(status: str, message: str, data: Any = None) -> dict:
 def require_superuser(current_user: CurrentUser):
     if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="System administrator access required")
+
+
+def _is_admin(current_user: CurrentUser) -> bool:
+    return is_system_admin_user(current_user)
+
+
+async def _workflow_scope_context(
+    db: AsyncSession,
+    current_user: CurrentUser,
+    requested_workspace_id: Optional[str] = None,
+):
+    if current_user.id == "anonymous":
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return await WorkspaceService.resolve_context(
+        db,
+        current_user.id,
+        current_user.roles,
+        current_user.is_superuser,
+        requested_workspace_id,
+    )
+
+
+async def require_workflow_manager(
+    db: AsyncSession,
+    current_user: CurrentUser,
+    requested_workspace_id: Optional[str] = None,
+):
+    """Allow system admins and supervisors to manage the selected workspace."""
+    context = await _workflow_scope_context(
+        db, current_user, requested_workspace_id
+    )
+    if _is_admin(current_user):
+        return context
+    if not context.active_workspace_id:
+        raise HTTPException(status_code=403, detail="Workspace access required")
+    await WorkspaceService.require_workspace_role(
+        db,
+        current_user,
+        context.active_workspace_id,
+        "supervisor",
+        requested_workspace_id,
+    )
+    return context
+
+
+async def require_workflow_access(
+    db: AsyncSession,
+    current_user: CurrentUser,
+    workflow: Workflow,
+    requested_workspace_id: Optional[str] = None,
+):
+    context = await _workflow_scope_context(
+        db, current_user, requested_workspace_id
+    )
+    if _is_admin(current_user):
+        return context
+    if not workflow.workspace_id:
+        raise HTTPException(status_code=403, detail="Workspace access required")
+    await WorkspaceService.require_workspace_role(
+        db,
+        current_user,
+        workflow.workspace_id,
+        "supervisor",
+        requested_workspace_id or context.active_workspace_id,
+    )
+    return context
+
+
+async def _set_default_scope(
+    db: AsyncSession, workflow: Workflow, is_default: bool
+) -> None:
+    # Clear the target first so the partial unique index never sees two
+    # defaults during a single flush.
+    workflow.is_default = False
+    await db.flush()
+    if not is_default:
+        return
+    result = await db.execute(
+        select(Workflow).where(
+            Workflow.id != workflow.id,
+            Workflow.workspace_id == workflow.workspace_id,
+            Workflow.target_entity == workflow.target_entity,
+        )
+    )
+    for other in result.scalars().all():
+        other.is_default = False
+    await db.flush()
+    workflow.is_default = True
+
+
+async def _get_accessible_workflow(
+    db: AsyncSession,
+    workflow_id: str,
+    current_user: CurrentUser,
+    requested_workspace_id: Optional[str] = None,
+) -> Optional[Workflow]:
+    workflow = await db.get(Workflow, workflow_id)
+    if not workflow:
+        return None
+    await require_workflow_access(
+        db, current_user, workflow, requested_workspace_id
+    )
+    return workflow
+
+
+async def _workspace_names(
+    db: AsyncSession, workflows: list[Workflow]
+) -> dict[str, str]:
+    workspace_ids = [w.workspace_id for w in workflows if w.workspace_id]
+    if not workspace_ids:
+        return {}
+    result = await db.execute(
+        select(Workspace).where(Workspace.id.in_(workspace_ids))
+    )
+    return {workspace.id: workspace.name for workspace in result.scalars().all()}
 
 
 # ============================================================================
@@ -121,6 +258,8 @@ class ActionUpdate(BaseModel):
 class StateLinkInput(BaseModel):
     state_id: str
     is_initial: bool = False
+    sort_order: Optional[int] = None
+    visual_config: Optional[dict] = None
 
 class VisualConfigUpdate(BaseModel):
     visual_config: Optional[dict] = None
@@ -141,17 +280,23 @@ class TransitionCreateInput(BaseModel):
     action_id: str
     to_state_id: str    # Uses state ID for workflow creation/update where links don't exist yet
     allowed_roles: Optional[List[str]] = None
+    source_handle: Optional[str] = None
+    target_handle: Optional[str] = None
+    visual_config: Optional[dict] = None
 
 class WorkflowCreate(BaseModel):
     name: str
-    target_entity: str
+    target_entity: str = "task"
+    workspace_id: Optional[str] = None
     is_active: bool = True
+    is_default: bool = False
     state_links: List[StateLinkInput] = []
     transitions: List[TransitionCreateInput] = []
 
 class WorkflowUpdate(BaseModel):
     name: Optional[str] = None
     is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
     state_links: Optional[List[StateLinkInput]] = None
     transitions: Optional[List[TransitionCreateInput]] = None
 
@@ -163,10 +308,11 @@ class WorkflowUpdate(BaseModel):
 @router.get("/states")
 async def list_states(
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
-    """List all global workflow states."""
-    require_superuser(current_user)
+    """List workflow states available to a workflow manager."""
+    await require_workflow_manager(db, current_user, workspace_id)
     result = await db.execute(select(WorkflowState).order_by(WorkflowState.label.asc()))
     states = result.scalars().all()
     return api_response("success", "States retrieved", [
@@ -179,10 +325,11 @@ async def list_states(
 async def create_state(
     payload: StateCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
-    """Create a new global workflow state."""
-    require_superuser(current_user)
+    """Create a workflow state available to managed workspaces."""
+    await require_workflow_manager(db, current_user, workspace_id)
     
     slug = generate_slug(payload.label)
     existing = await db.execute(select(WorkflowState).where(WorkflowState.slug == slug))
@@ -194,7 +341,16 @@ async def create_state(
     await db.commit()
     await db.refresh(state)
     
-    return api_response("success", "State created", {"id": state.id, "slug": state.slug})
+    return api_response(
+        "success",
+        "State created",
+        {
+            "id": state.id,
+            "slug": state.slug,
+            "label": state.label,
+            "color": state.color,
+        },
+    )
 
 
 @router.put("/states/{state_id}")
@@ -276,10 +432,11 @@ async def delete_state(
 @router.get("/actions")
 async def list_actions(
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
-    """List all global workflow actions."""
-    require_superuser(current_user)
+    """List workflow actions available to a workflow manager."""
+    await require_workflow_manager(db, current_user, workspace_id)
     result = await db.execute(select(WorkflowAction).order_by(WorkflowAction.label.asc()))
     actions = result.scalars().all()
     return api_response("success", "Actions retrieved", [
@@ -292,10 +449,11 @@ async def list_actions(
 async def create_action(
     payload: ActionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
-    """Create a new global workflow action."""
-    require_superuser(current_user)
+    """Create a workflow action available to managed workspaces."""
+    await require_workflow_manager(db, current_user, workspace_id)
     
     slug = generate_slug(payload.label)
     existing = await db.execute(select(WorkflowAction).where(WorkflowAction.slug == slug))
@@ -307,7 +465,11 @@ async def create_action(
     await db.commit()
     await db.refresh(action)
     
-    return api_response("success", "Action created", {"id": action.id, "slug": action.slug})
+    return api_response(
+        "success",
+        "Action created",
+        {"id": action.id, "slug": action.slug, "label": action.label},
+    )
 
 
 @router.put("/actions/{action_id}")
@@ -369,26 +531,37 @@ async def delete_action(
 
 @router.get("")
 async def list_workflows(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
-    """List all workflows."""
-    require_superuser(current_user)
+    """List workflows available to the selected workflow manager scope."""
+    context = await require_workflow_manager(db, current_user, workspace_id)
 
-    result = await db.execute(
+    query = (
         select(Workflow)
         .options(selectinload(Workflow.state_links))
-        .order_by(Workflow.name.asc())
+        .order_by(Workflow.target_entity.asc(), Workflow.name.asc())
     )
-    workflows = result.scalars().all()
+    if not _is_admin(current_user):
+        query = query.where(Workflow.workspace_id == context.active_workspace_id)
+    elif context.active_workspace_id:
+        query = query.where(Workflow.workspace_id == context.active_workspace_id)
 
-    # Count transitions for each workflow by querying via state links
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+    result = await db.execute(
+        query.offset((page - 1) * page_size).limit(page_size)
+    )
+    workflows = list(result.scalars().all())
+    workspace_names = await _workspace_names(db, workflows)
+
     workflow_data = []
     for w in workflows:
-        # Get all state link IDs for this workflow
         state_link_ids = [sl.id for sl in w.state_links]
-        
-        # Count transitions that reference these state links
         if state_link_ids:
             trans_count_result = await db.execute(
                 select(func.count()).select_from(WorkflowTransition).where(
@@ -404,23 +577,32 @@ async def list_workflows(
             "id": w.id,
             "name": w.name,
             "target_entity": w.target_entity,
+            "workspace_id": w.workspace_id,
+            "workspace_name": workspace_names.get(w.workspace_id),
             "is_active": w.is_active,
+            "is_default": w.is_default,
             "states_count": len(w.state_links),
             "transitions_count": transitions_count,
         })
 
-    return api_response("success", "Workflows retrieved", workflow_data)
+    return {
+        "status": "success",
+        "message": "Workflows retrieved",
+        "data": workflow_data,
+        "total": total or 0,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/{workflow_id}")
 async def get_workflow(
     workflow_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Get workflow with states and transitions."""
-    require_superuser(current_user)
-
     result = await db.execute(
         select(Workflow)
         .where(Workflow.id == workflow_id)
@@ -435,6 +617,7 @@ async def get_workflow(
 
     if not workflow:
         return api_response("error", "Workflow not found")
+    await require_workflow_access(db, current_user, workflow, workspace_id)
 
     # Collect transitions from state links
     transitions = []
@@ -449,12 +632,15 @@ async def get_workflow(
         "id": workflow.id,
         "name": workflow.name,
         "target_entity": workflow.target_entity,
+        "workspace_id": workflow.workspace_id,
         "is_active": workflow.is_active,
+        "is_default": workflow.is_default,
         "state_links": [
             {
                 "id": sl.id,
                 "state_id": sl.state_id,
                 "state_slug": sl.state.slug,
+                "state_label": sl.state.label,
                 "state_color": sl.state.color,
                 "is_initial": sl.is_initial,
                 "sort_order": sl.sort_order,
@@ -469,6 +655,7 @@ async def get_workflow(
                 "from_state_slug": t.from_state_link.state.slug,
                 "action_id": t.action_id,
                 "action_slug": t.action_ref.slug if t.action_ref else None,
+                "action_label": t.action_ref.label if t.action_ref else None,
                 "to_state_link_id": t.to_state_link_id,
                 "to_state_slug": t.to_state_link.state.slug,
                 "sort_order": t.sort_order,
@@ -484,21 +671,15 @@ async def get_workflow(
 async def get_workflow_by_entity(
     target_entity: str,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
-    """Get workflow by target entity name."""
-    require_superuser(current_user)
-    result = await db.execute(
-        select(Workflow)
-        .where(Workflow.target_entity == target_entity)
-        .options(
-            selectinload(Workflow.state_links).selectinload(WorkflowStateLink.state),
-            selectinload(Workflow.state_links)
-            .selectinload(WorkflowStateLink.outgoing_transitions)
-            .selectinload(WorkflowTransition.action_ref)
-        )
+    """Get the selected workspace's workflow for an entity."""
+    context = await require_workflow_manager(db, current_user, workspace_id)
+    workflow = await WorkflowRepository(db).get_workflow(
+        target_entity,
+        workspace_id=context.active_workspace_id,
     )
-    workflow = result.scalar_one_or_none()
 
     if not workflow:
         return api_response("error", f"No workflow for entity '{target_entity}'")
@@ -518,13 +699,16 @@ async def get_workflow_by_entity(
         "id": workflow.id,
         "name": workflow.name,
         "target_entity": workflow.target_entity,
+        "workspace_id": workflow.workspace_id,
         "is_active": workflow.is_active,
+        "is_default": workflow.is_default,
         "initial_state": initial_state.state.slug if initial_state else None,
         "state_links": [
             {
                 "id": sl.id,
                 "state_id": sl.state_id,
                 "state_slug": sl.state.slug,
+                "state_label": sl.state.label,
                 "state_color": sl.state.color,
                 "is_initial": sl.is_initial,
             }
@@ -546,47 +730,109 @@ async def get_workflow_by_entity(
 async def create_workflow(
     payload: WorkflowCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
-    """Create a new workflow for an entity."""
-    require_superuser(current_user)
+    """Create a workflow in the selected workspace, or a legacy global workflow."""
+    context = await require_workflow_manager(db, current_user, workspace_id)
+    scope_workspace_id = payload.workspace_id or context.active_workspace_id
+    if not _is_admin(current_user) and not scope_workspace_id:
+        raise HTTPException(status_code=403, detail="Workspace access required")
+    if scope_workspace_id:
+        workspace = await db.get(Workspace, scope_workspace_id)
+        if not workspace or not workspace.is_active:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        if not _is_admin(current_user):
+            await WorkspaceService.require_workspace_role(
+                db,
+                current_user,
+                scope_workspace_id,
+                "supervisor",
+                workspace_id,
+            )
 
-    existing = await db.execute(select(Workflow).where(Workflow.target_entity == payload.target_entity))
-    if existing.scalar_one_or_none():
-        return api_response("error", f"Workflow for '{payload.target_entity}' already exists")
+    if not scope_workspace_id:
+        existing = await db.execute(
+            select(Workflow).where(
+                Workflow.target_entity == payload.target_entity,
+                Workflow.workspace_id.is_(None),
+            )
+        )
+        if existing.scalar_one_or_none():
+            return api_response(
+                "error", f"Global workflow for '{payload.target_entity}' already exists"
+            )
+
+    initial_count = sum(1 for sl in payload.state_links if sl.is_initial)
+    if initial_count > 1:
+        return api_response("error", "Only one state can be marked as initial")
+    state_ids = {sl.state_id for sl in payload.state_links}
+    if len(state_ids) != len(payload.state_links):
+        return api_response("error", "Duplicate states are not allowed in a workflow")
+    for transition in payload.transitions:
+        if (
+            transition.from_state_id not in state_ids
+            or transition.to_state_id not in state_ids
+        ):
+            return api_response(
+                "error", "Invalid state IDs in transition - state not in workflow"
+            )
+    if state_ids:
+        existing_states = await db.execute(
+            select(WorkflowState.id).where(WorkflowState.id.in_(state_ids))
+        )
+        if len(set(existing_states.scalars().all())) != len(state_ids):
+            return api_response("error", "One or more workflow states were not found")
+    action_ids = {transition.action_id for transition in payload.transitions}
+    if action_ids:
+        existing_actions = await db.execute(
+            select(WorkflowAction.id).where(WorkflowAction.id.in_(action_ids))
+        )
+        if len(set(existing_actions.scalars().all())) != len(action_ids):
+            return api_response("error", "One or more workflow actions were not found")
 
     workflow = Workflow(
         name=payload.name,
         target_entity=payload.target_entity,
+        workspace_id=scope_workspace_id,
         is_active=payload.is_active,
     )
     db.add(workflow)
     await db.flush()
+    if scope_workspace_id:
+        scope_count = await db.scalar(
+            select(func.count()).select_from(Workflow).where(
+                Workflow.id != workflow.id,
+                Workflow.workspace_id == scope_workspace_id,
+                Workflow.target_entity == payload.target_entity,
+            )
+        )
+        await _set_default_scope(
+            db, workflow, payload.is_default or not scope_count
+        )
+    else:
+        workflow.is_default = payload.is_default
 
-    # Add state links
-    initial_count = sum(1 for sl in payload.state_links if sl.is_initial)
-    if initial_count > 1:
-        return api_response("error", "Only one state can be marked as initial")
-
-    state_link_map = {}  # Map state_id to state_link_id for transition creation
+    state_link_map = {}
     for i, sl in enumerate(payload.state_links):
         link = WorkflowStateLink(
             workflow_id=workflow.id,
             state_id=sl.state_id,
             is_initial=sl.is_initial,
-            sort_order=i,
+            sort_order=sl.sort_order if sl.sort_order is not None else i,
         )
+        link.set_visual_config(sl.visual_config)
         db.add(link)
         await db.flush()
         state_link_map[sl.state_id] = link.id
 
-    # Add transitions using state IDs (resolve to state link IDs)
     for i, t in enumerate(payload.transitions):
         from_state_link_id = state_link_map.get(t.from_state_id)
         to_state_link_id = state_link_map.get(t.to_state_id)
-
         if not from_state_link_id or not to_state_link_id:
-            return api_response("error", "Invalid state IDs in transition - state not in workflow")
+            return api_response(
+                "error", "Invalid state IDs in transition - state not in workflow"
+            )
 
         transition = WorkflowTransition(
             from_state_link_id=from_state_link_id,
@@ -595,10 +841,20 @@ async def create_workflow(
             sort_order=i,
         )
         transition.set_allowed_roles(t.allowed_roles)
+        visual_config = dict(t.visual_config or {})
+        if t.source_handle:
+            visual_config["sourceHandle"] = t.source_handle
+        if t.target_handle:
+            visual_config["targetHandle"] = t.target_handle
+        transition.set_visual_config(visual_config)
         db.add(transition)
 
     await db.commit()
-    return api_response("success", f"Workflow created for '{payload.target_entity}'", {"id": workflow.id})
+    return api_response(
+        "success",
+        f"Workflow created for '{payload.target_entity}'",
+        {"id": workflow.id, "workspace_id": workflow.workspace_id},
+    )
 
 
 @router.put("/{workflow_id}")
@@ -606,11 +862,10 @@ async def update_workflow(
     workflow_id: str,
     payload: WorkflowUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Update a workflow. Replaces state_links/transitions if provided."""
-    require_superuser(current_user)
-
     result = await db.execute(
         select(Workflow)
         .where(Workflow.id == workflow_id)
@@ -620,53 +875,81 @@ async def update_workflow(
 
     if not workflow:
         return api_response("error", "Workflow not found")
+    await require_workflow_access(db, current_user, workflow, workspace_id)
 
     if payload.name is not None:
         workflow.name = payload.name
     if payload.is_active is not None:
         workflow.is_active = payload.is_active
+    if payload.is_default is not None:
+        await _set_default_scope(db, workflow, payload.is_default)
 
-    # Replace state links if provided
     if payload.state_links is not None:
         initial_count = sum(1 for sl in payload.state_links if sl.is_initial)
         if initial_count > 1:
             return api_response("error", "Only one state can be marked as initial")
+        state_ids = {sl.state_id for sl in payload.state_links}
+        if len(state_ids) != len(payload.state_links):
+            return api_response(
+                "error", "Duplicate states are not allowed in a workflow"
+            )
+        if payload.transitions is not None:
+            for transition in payload.transitions:
+                if (
+                    transition.from_state_id not in state_ids
+                    or transition.to_state_id not in state_ids
+                ):
+                    return api_response(
+                        "error",
+                        "Invalid state IDs in transition - state not in workflow",
+                    )
+            action_ids = {
+                transition.action_id for transition in payload.transitions
+            }
+            if action_ids:
+                existing_actions = await db.execute(
+                    select(WorkflowAction.id).where(
+                        WorkflowAction.id.in_(action_ids)
+                    )
+                )
+                if len(set(existing_actions.scalars().all())) != len(action_ids):
+                    return api_response(
+                        "error", "One or more workflow actions were not found"
+                    )
+        if state_ids:
+            existing_states = await db.execute(
+                select(WorkflowState.id).where(WorkflowState.id.in_(state_ids))
+            )
+            if len(set(existing_states.scalars().all())) != len(state_ids):
+                return api_response(
+                    "error", "One or more workflow states were not found"
+                )
 
         for sl in workflow.state_links:
             await db.delete(sl)
 
-        state_link_map = {}  # Map state_id to state_link_id for transition creation
+        state_link_map = {}
         for i, sl in enumerate(payload.state_links):
             link = WorkflowStateLink(
                 workflow_id=workflow.id,
                 state_id=sl.state_id,
                 is_initial=sl.is_initial,
-                sort_order=i,
+                sort_order=sl.sort_order if sl.sort_order is not None else i,
             )
+            link.set_visual_config(sl.visual_config)
             db.add(link)
             await db.flush()
             state_link_map[sl.state_id] = link.id
 
-        # Replace transitions if provided
         if payload.transitions is not None:
-            # Delete existing transitions by checking state link IDs
-            state_link_ids = list(state_link_map.values())
-            if state_link_ids:
-                existing_transitions = await db.execute(
-                    select(WorkflowTransition).where(
-                        (WorkflowTransition.from_state_link_id.in_(state_link_ids)) |
-                        (WorkflowTransition.to_state_link_id.in_(state_link_ids))
-                    )
-                )
-                for t in existing_transitions.scalars().all():
-                    await db.delete(t)
-
             for i, t in enumerate(payload.transitions):
                 from_state_link_id = state_link_map.get(t.from_state_id)
                 to_state_link_id = state_link_map.get(t.to_state_id)
-
                 if not from_state_link_id or not to_state_link_id:
-                    return api_response("error", "Invalid state IDs in transition - state not in workflow")
+                    return api_response(
+                        "error",
+                        "Invalid state IDs in transition - state not in workflow",
+                    )
 
                 transition = WorkflowTransition(
                     from_state_link_id=from_state_link_id,
@@ -675,6 +958,12 @@ async def update_workflow(
                     sort_order=i,
                 )
                 transition.set_allowed_roles(t.allowed_roles)
+                visual_config = dict(t.visual_config or {})
+                if t.source_handle:
+                    visual_config["sourceHandle"] = t.source_handle
+                if t.target_handle:
+                    visual_config["targetHandle"] = t.target_handle
+                transition.set_visual_config(visual_config)
                 db.add(transition)
 
     await db.commit()
@@ -685,18 +974,36 @@ async def update_workflow(
 async def delete_workflow(
     workflow_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Delete a workflow (cascades to state_links and transitions)."""
-    require_superuser(current_user)
-    
     result = await db.execute(select(Workflow).where(Workflow.id == workflow_id))
     workflow = result.scalar_one_or_none()
-    
+
     if not workflow:
         return api_response("error", "Workflow not found")
-    
+    await require_workflow_access(db, current_user, workflow, workspace_id)
+
+    was_default = workflow.is_default
+    scope_workspace_id = workflow.workspace_id
+    target_entity = workflow.target_entity
     await db.delete(workflow)
+    await db.flush()
+    if was_default and scope_workspace_id:
+        fallback = await db.scalar(
+            select(Workflow.id)
+            .where(
+                Workflow.workspace_id == scope_workspace_id,
+                Workflow.target_entity == target_entity,
+                Workflow.is_active == True,
+            )
+            .order_by(Workflow.created_at.asc())
+        )
+        if fallback:
+            replacement = await db.get(Workflow, fallback)
+            if replacement:
+                replacement.is_default = True
     await db.commit()
     return api_response("success", "Workflow deleted")
 
@@ -710,17 +1017,16 @@ async def add_state_to_workflow(
     workflow_id: str,
     payload: StateLinkInput,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Add a global state to a workflow."""
-    require_superuser(current_user)
-    
-    result = await db.execute(
-        select(Workflow).where(Workflow.id == workflow_id).options(selectinload(Workflow.state_links))
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
     )
-    workflow = result.scalar_one_or_none()
     if not workflow:
         return api_response("error", "Workflow not found")
+    await db.refresh(workflow, ["state_links"])
     
     # Check state exists
     state_result = await db.execute(select(WorkflowState).where(WorkflowState.id == payload.state_id))
@@ -754,10 +1060,15 @@ async def remove_state_from_workflow(
     workflow_id: str,
     state_link_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Remove a state link from a workflow (does not delete the global state)."""
-    require_superuser(current_user)
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
+    )
+    if not workflow:
+        return api_response("error", "Workflow not found")
 
     result = await db.execute(
         select(WorkflowStateLink)
@@ -789,17 +1100,16 @@ async def update_state_link(
     state_link_id: str,
     payload: StateLinkInput,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Update a state link."""
-    require_superuser(current_user)
-    
-    result = await db.execute(
-        select(Workflow).where(Workflow.id == workflow_id).options(selectinload(Workflow.state_links))
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
     )
-    workflow = result.scalar_one_or_none()
     if not workflow:
         return api_response("error", "Workflow not found")
+    await db.refresh(workflow, ["state_links"])
     
     target_link = None
     for sl in workflow.state_links:
@@ -809,6 +1119,18 @@ async def update_state_link(
     
     if not target_link:
         return api_response("error", "State link not found")
+
+    if payload.state_id != target_link.state_id:
+        state_result = await db.execute(
+            select(WorkflowState).where(WorkflowState.id == payload.state_id)
+        )
+        if not state_result.scalar_one_or_none():
+            return api_response("error", "State not found")
+        target_link.state_id = payload.state_id
+    if payload.sort_order is not None:
+        target_link.sort_order = payload.sort_order
+    if payload.visual_config is not None:
+        target_link.set_visual_config(payload.visual_config)
     
     if payload.is_initial:
         for sl in workflow.state_links:
@@ -826,17 +1148,16 @@ async def set_initial_state(
     workflow_id: str,
     state_link_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Set a state as the initial state for a workflow."""
-    require_superuser(current_user)
-    
-    result = await db.execute(
-        select(Workflow).where(Workflow.id == workflow_id).options(selectinload(Workflow.state_links))
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
     )
-    workflow = result.scalar_one_or_none()
     if not workflow:
         return api_response("error", "Workflow not found")
+    await db.refresh(workflow, ["state_links"])
     
     target_link = None
     for sl in workflow.state_links:
@@ -857,10 +1178,15 @@ async def update_workflow_layout(
     workflow_id: str,
     payload: WorkflowLayoutUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Update layout (positions) for all state links in a workflow."""
-    require_superuser(current_user)
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
+    )
+    if not workflow:
+        return api_response("error", "Workflow not found")
 
     # Get all state links for this workflow
     result = await db.execute(
@@ -893,10 +1219,18 @@ async def add_transition_to_workflow(
     workflow_id: str,
     payload: TransitionInput,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Add a transition to a workflow."""
-    require_superuser(current_user)
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
+    )
+    if not workflow:
+        return api_response("error", "Workflow not found")
+    action = await db.get(WorkflowAction, payload.action_id)
+    if not action:
+        return api_response("error", "Action not found")
 
     # Verify the state links belong to this workflow
     from_link_result = await db.execute(
@@ -958,10 +1292,18 @@ async def update_transition(
     transition_id: str,
     payload: TransitionInput,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Update a transition."""
-    require_superuser(current_user)
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
+    )
+    if not workflow:
+        return api_response("error", "Workflow not found")
+    action = await db.get(WorkflowAction, payload.action_id)
+    if not action:
+        return api_response("error", "Action not found")
 
     # Verify the transition exists and belongs to this workflow (via state links)
     transition_result = await db.execute(
@@ -971,6 +1313,14 @@ async def update_transition(
 
     if not transition:
         return api_response("error", "Transition not found")
+    transition_link = await db.scalar(
+        select(WorkflowStateLink.id).where(
+            WorkflowStateLink.id == transition.from_state_link_id,
+            WorkflowStateLink.workflow_id == workflow.id,
+        )
+    )
+    if not transition_link:
+        return api_response("error", "Transition does not belong to this workflow")
 
     # Verify the new state links belong to this workflow
     from_link_result = await db.execute(
@@ -997,6 +1347,12 @@ async def update_transition(
     transition.action_id = payload.action_id
     transition.to_state_link_id = payload.to_state_link_id
     transition.set_allowed_roles(payload.allowed_roles)
+    visual_config = transition.get_visual_config()
+    if payload.source_handle:
+        visual_config["sourceHandle"] = payload.source_handle
+    if payload.target_handle:
+        visual_config["targetHandle"] = payload.target_handle
+    transition.set_visual_config(visual_config)
 
     await db.commit()
     return api_response("success", "Transition updated")
@@ -1007,10 +1363,15 @@ async def remove_transition_from_workflow(
     workflow_id: str,
     transition_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Remove a transition from a workflow."""
-    require_superuser(current_user)
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
+    )
+    if not workflow:
+        return api_response("error", "Workflow not found")
 
     # Verify the transition exists and belongs to this workflow (via state links)
     transition_result = await db.execute(
@@ -1043,10 +1404,15 @@ async def update_transition_visual_config(
     transition_id: str,
     payload: VisualConfigUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user_from_token)
+    current_user: CurrentUser = Depends(get_current_user_from_token),
+    workspace_id: Optional[str] = Header(None, alias="X-Workspace-ID"),
 ):
     """Update visual config (handle routing, edge style) for a transition."""
-    require_superuser(current_user)
+    workflow = await _get_accessible_workflow(
+        db, workflow_id, current_user, workspace_id
+    )
+    if not workflow:
+        return api_response("error", "Workflow not found")
 
     # Verify the transition exists and belongs to this workflow (via state links)
     transition_result = await db.execute(

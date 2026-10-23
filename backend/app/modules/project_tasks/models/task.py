@@ -20,6 +20,14 @@ class Task(BaseModel):
             "workspace_id IS NULL OR project_id IS NOT NULL",
             name="ck_task_workspace_requires_project",
         ),
+        CheckConstraint(
+            "artist_portal_kind IS NULL OR artist_portal_kind IN ('song', 'milestone')",
+            name="ck_task_artist_portal_kind",
+        ),
+        CheckConstraint(
+            "integration_kind IS NULL OR integration_kind = 'press_release'",
+            name="ck_task_integration_kind",
+        ),
         ForeignKeyConstraint(
             ["project_id", "workspace_id"],
             ["project.id", "project.workspace_id"],
@@ -47,3 +55,6 @@ class Task(BaseModel):
     priority: Mapped[str] = mapped_column(String(100), nullable=True, default="medium")
     status: Mapped[str] = mapped_column(String(100), nullable=True, default="pending")
     due_date: Mapped[datetime] = mapped_column(DateTime, nullable=True, default=None)
+    artist_portal_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    public_summary: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    integration_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)

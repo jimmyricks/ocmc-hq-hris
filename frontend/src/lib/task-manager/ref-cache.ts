@@ -8,12 +8,13 @@
 import { taskApi } from "./api.js";
 import type { Project, TaskCategory, TaskType, User } from "./types.js";
 import { getActiveWorkspaceId } from "$lib/workspaces/context";
+import { getUser } from "$lib/auth";
 
 type Entry<T> = { promise: Promise<T> } | { value: T } | undefined;
 
 const _cache: Record<string, Entry<any>> = {};
-const workspaceCacheKey = (key: string) =>
-	`${key}:${getActiveWorkspaceId() ?? "global"}`;
+const sessionCacheKey = (key: string) =>
+	`${key}:${getUser()?.id ?? "anonymous"}:${getActiveWorkspaceId() ?? "global"}`;
 
 async function getOrFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
 	const entry = _cache[key];
@@ -21,40 +22,33 @@ async function getOrFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T>
 		if ("promise" in entry) return entry.promise;
 		return entry.value;
 	}
-	const promise = fetcher().finally(() => {
-		// Promote to resolved value so subsequent callers skip the promise check.
-		const e = _cache[key];
-		if (e && "promise" in e) {
-			// Will be replaced below; if the promise rejected, clear so next
-			// call retries.
-		}
-	});
-	_cache[key] = { promise };
+	const pending = { promise: fetcher() };
+	_cache[key] = pending;
 	try {
-		const value = await promise;
-		_cache[key] = { value };
+		const value = await pending.promise;
+		if (_cache[key] === pending) _cache[key] = { value };
 		return value;
 	} catch (err) {
-		delete _cache[key];
+		if (_cache[key] === pending) delete _cache[key];
 		throw err;
 	}
 }
 
 export const refCache = {
 	async getUsers(): Promise<User[]> {
-		return getOrFetch(workspaceCacheKey("users"), () => taskApi.getUsers());
+		return getOrFetch(sessionCacheKey("users"), () => taskApi.getUsers());
 	},
 
 	async getTaskTypes(): Promise<TaskType[]> {
-		return getOrFetch(workspaceCacheKey("task_types"), () => taskApi.getTaskTypes());
+		return getOrFetch(sessionCacheKey("task_types"), () => taskApi.getTaskTypes());
 	},
 
 	async getTaskCategories(): Promise<TaskCategory[]> {
-		return getOrFetch(workspaceCacheKey("task_categories"), () => taskApi.getTaskCategories());
+		return getOrFetch(sessionCacheKey("task_categories"), () => taskApi.getTaskCategories());
 	},
 
 	async getProjects(): Promise<Project[]> {
-		return getOrFetch(workspaceCacheKey("projects"), () => taskApi.getProjects());
+		return getOrFetch(sessionCacheKey("projects"), () => taskApi.getProjects());
 	},
 
 	/** Invalidate one key or the entire cache. */

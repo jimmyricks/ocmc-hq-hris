@@ -35,6 +35,18 @@ from app.application.email_notifications.document_notify import notify_after_wor
 
 router = APIRouter(tags=["entity"])
 
+_TASK_LIFECYCLE_ACTIONS = {
+    "submit",
+    "submit_for_review",
+    "submit_for_approval",
+    "submit_work",
+    "approve",
+    "reject",
+    "request_changes",
+    "request_revision",
+    "revise",
+}
+
 
 def _workflow_state_field(meta: Any, model: Any) -> str | None:
     configured = getattr(getattr(meta, "workflow", None), "state_field", None)
@@ -76,7 +88,7 @@ async def get_workflow_progress(
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
     try:
-        data = await workflow_progress_service.get_progress(entity, record_id)
+        data = await workflow_progress_service.get_progress(entity, record_id, user)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ActionResponse(
@@ -121,30 +133,39 @@ async def workflow_action(
         )
 
     user = await get_current_user_from_token(authorization, db)
-
-    workflow = await workflow_repo.get_workflow(entity)
-    if not workflow:
+    record_id = request.record_id or request.id
+    if not record_id:
         return ActionResponse(
             status="error",
-            message=f"No workflow configured for entity '{entity}'",
-            errors={"workflow": f"Create a workflow with target_entity='{entity}' first"}
+            message="Record ID is required",
+            errors={"id": "Provide id or record_id"},
         )
 
-    result = await db.execute(select(model).where(model.id == request.id))
+    result = await db.execute(select(model).where(model.id == record_id))
     doc = result.scalar_one_or_none()
 
     if not doc:
         return ActionResponse(
             status="error",
-            message=f"Record '{request.id}' not found",
-            errors={"id": f"No {meta.label} found with ID: {request.id}"}
+            message=f"Record '{record_id}' not found",
+            errors={"id": f"No {meta.label} found with ID: {record_id}"}
         )
 
     if not await row_scope_service.can_access_record(
         doc, entity, user.id, user.role_ids, user.roles, user.is_superuser
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
-    await row_scope_service.authorize_record_write(entity, doc, {}, user)
+    await row_scope_service.authorize_workflow_transition(entity, doc, user)
+
+    workflow = await workflow_repo.get_workflow(
+        entity, workspace_id=getattr(doc, "workspace_id", None)
+    )
+    if not workflow:
+        return ActionResponse(
+            status="error",
+            message=f"No workflow configured for entity '{entity}'",
+            errors={"workflow": f"Create a workflow with target_entity='{entity}' first"}
+        )
 
     # Get current state and normalize to slug format
     current_state_raw = getattr(doc, state_field, None)
@@ -160,7 +181,8 @@ async def workflow_action(
         current_state,
         request.action,
         user,
-        request.id,
+        record_id,
+        workspace_id=getattr(doc, "workspace_id", None),
         workflow=workflow,
         doc=doc,
     )
@@ -170,6 +192,16 @@ async def workflow_action(
             status="error",
             message=error,
             errors={"action": f"Cannot perform '{request.action}' from state '{current_state}'"}
+        )
+
+    if entity == "task" and request.action in _TASK_LIFECYCLE_ACTIONS:
+        return ActionResponse(
+            status="error",
+            message=(
+                "Use the task submission/review endpoints for this transition so "
+                "the submission and approval records stay in sync."
+            ),
+            errors={"action": f"'{request.action}' requires task lifecycle data"},
         )
 
     # Resolve human-readable action label for workflow hooks
@@ -187,7 +219,7 @@ async def workflow_action(
     # Run workflow hook (pass human-readable label as action)
     wf_ctx = WorkflowContext(
         db=db, user=user, entity=entity, doc=doc,
-        record_id=request.id, action=action_label,
+        record_id=record_id, action=action_label,
         from_state=current_state, to_state=target_state
     )
     hook_result = await hook_registry.execute_workflow(entity, wf_ctx)
@@ -207,7 +239,7 @@ async def workflow_action(
     # Log the workflow transition to the ledger
     await log_workflow_transition(
         entity_type=entity,
-        record_id=request.id,
+        record_id=record_id,
         previous_state=current_state,
         next_state=target_state,
         action=request.action,

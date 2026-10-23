@@ -8,3 +8,4 @@ from .task_submission import TaskSubmission
 from .task_category import TaskCategory
 from .task_link import TaskLink
 from .project_member import ProjectMember
+from .bahandi_integration import BahandiFeedCredential, BahandiPressOutbox

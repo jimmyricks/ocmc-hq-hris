@@ -8,7 +8,7 @@
   import { toast } from "$lib/notifications";
   import { saveEntity } from "$lib/api/index.js";
   import { workspaceApi } from "$lib/workspaces/api.js";
-  import type { WorkspaceContext } from "$lib/workspaces/types.js";
+  import { useAppState } from "$lib/app-state.svelte.js";
   import type { Project, User } from "$lib/task-manager/types.js";
 
   interface Props {
@@ -25,6 +25,8 @@
     onSaved,
   }: Props = $props();
 
+  const appState = useAppState();
+  const workspaceContext = $derived(appState.workspaceContext);
   let isEdit = $derived(!!project?.id);
   let saving = $state(false);
   let name = $state("");
@@ -32,7 +34,6 @@
   let icon = $state("folder");
   let managerId = $state("");
   let description = $state("");
-  let workspaceContext = $state<WorkspaceContext | null>(null);
   let workspaceId = $state("");
   let teamId = $state("");
   let startDate = $state("");
@@ -82,17 +83,9 @@
   });
 
   $effect(() => {
-    if (!open || workspaceContext) return;
-    workspaceApi
-      .getContext()
-      .then((context) => {
-        workspaceContext = context;
-        workspaceId =
-          project?.workspace_id ?? context.active_workspace_id ?? "";
-      })
-      .catch((error) => {
-        console.error("Failed to load workspace context:", error);
-      });
+    if (!open || workspaceId) return;
+    workspaceId =
+      project?.workspace_id ?? workspaceContext?.active_workspace_id ?? "";
   });
 
   $effect(() => {

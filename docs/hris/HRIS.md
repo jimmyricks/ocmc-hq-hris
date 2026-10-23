@@ -65,7 +65,7 @@ PayrollEntry.total_amount = SUM(PayrollLineItem.amount)
 
 ## Verification Workflow
 
-1. User submits a `TaskSubmission` with an optional `external_link` to the externally stored deliverable.
+1. User submits a `TaskSubmission` with the deliverable required by the task type's `submission_mode`: `external_link` for link tasks or `content` for text tasks.
 2. The Project Manager reviews the submission and adds a `TaskApproval` decision.
 3. If approved, `TaskSubmission` becomes `approved` and `Task` becomes `approved`.
 4. On payroll generation, the `Task` moves to `closed` and `Ledger` records the credit.
@@ -86,7 +86,7 @@ PayrollEntry.total_amount = SUM(PayrollLineItem.amount)
 ## Key Interfaces
 
 - Project board (Trello-like columns for task statuses).
-- Task detail with external link, submission history, and approval log.
+- Task detail with the current deliverable (external link or pasted text), submission history, and approval log.
 - Payroll dashboard for HR/PM.
 - User task list.
 

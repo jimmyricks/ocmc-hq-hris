@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -119,8 +120,9 @@ class WorkspaceService:
                 raise NotFoundError("Workspace", requested_workspace_id)
             return WorkspaceContext((workspace.id,), workspace.id)
 
+        # HR resolves globally: read visibility spans all workspaces.
         if WorkspaceService.is_hr(roles):
-            return WorkspaceContext((), None)
+            return WorkspaceContext((), None, is_global=True)
 
         if requested_workspace_id == "all":
             raise ForbiddenError("Only system administrators can select all workspaces")
@@ -130,20 +132,22 @@ class WorkspaceService:
             .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
             .where(
                 WorkspaceMembership.user_id == user_id,
+                WorkspaceMembership.membership_role == "supervisor",
                 WorkspaceMembership.is_active.is_(True),
                 Workspace.is_active.is_(True),
             )
+            .order_by(Workspace.name)
         )
         memberships = result.all()
         if not memberships:
-            raise ForbiddenError("You are not assigned to an active workspace")
+            return WorkspaceContext((), None)
 
         home = next(
             (membership for membership, _ in memberships if membership.is_home),
             None,
         )
         if not home:
-            raise ForbiddenError("An active home workspace has not been assigned")
+            home = memberships[0][0]
 
         if requested_workspace_id:
             matching = next(
@@ -183,12 +187,94 @@ class WorkspaceService:
             )
             .where(
                 WorkspaceMembership.user_id == user_id,
+                WorkspaceMembership.membership_role == "supervisor",
                 WorkspaceMembership.is_active.is_(True),
                 Workspace.is_active.is_(True),
             )
             .order_by(Workspace.name)
         )
         return list(result.scalars().unique().all())
+
+    @staticmethod
+    async def get_context_payload(
+        db: AsyncSession,
+        user: Any,
+        requested_workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the workspace/capability payload consumed by the frontend shell."""
+        roles = getattr(user, "roles", []) or []
+        is_superuser = bool(getattr(user, "is_superuser", False))
+        user_id = str(getattr(user, "id"))
+
+        context = await WorkspaceService.resolve_context(
+            db,
+            user_id,
+            roles,
+            is_superuser,
+            requested_workspace_id,
+        )
+        workspaces = await WorkspaceService.visible_workspaces(
+            db, user_id, roles, is_superuser
+        )
+        memberships = (
+            await db.scalars(
+                select(WorkspaceMembership)
+                .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
+                .where(
+                    WorkspaceMembership.user_id == user_id,
+                    WorkspaceMembership.membership_role == "supervisor",
+                    WorkspaceMembership.is_active.is_(True),
+                    Workspace.is_active.is_(True),
+                )
+            )
+        ).all()
+        memberships_by_workspace = {
+            membership.workspace_id: membership for membership in memberships
+        }
+        active_membership = memberships_by_workspace.get(context.active_workspace_id)
+        active_role = active_membership.membership_role if active_membership else None
+        is_system_admin = WorkspaceService.is_system_admin(roles, is_superuser)
+        capabilities = {
+            "can_view_all_workspaces": is_system_admin,
+            "can_manage_active_workspace": is_system_admin or active_role == "supervisor",
+            "can_manage_payroll": WorkspaceService.is_payroll_admin(roles, is_superuser),
+            "can_view_global_schedule": is_system_admin
+            or any(item.membership_role == "supervisor" for item in memberships),
+            "can_view_hr_directory": is_system_admin or WorkspaceService.is_hr(roles),
+            "is_system_admin": is_system_admin,
+        }
+
+        def workspace_dict(workspace: Workspace) -> dict[str, Any]:
+            membership = memberships_by_workspace.get(workspace.id)
+            return {
+                "id": workspace.id,
+                "name": workspace.name,
+                "slug": workspace.slug,
+                "color": workspace.color,
+                "timezone": workspace.timezone,
+                "is_active": workspace.is_active,
+                "membership_role": membership.membership_role if membership else None,
+                "is_home": bool(membership and membership.is_home),
+                "can_manage": is_system_admin
+                or bool(membership and membership.membership_role == "supervisor"),
+            }
+
+        workspace_rows = [workspace_dict(workspace) for workspace in workspaces]
+
+        return {
+            "active_workspace_id": context.active_workspace_id,
+            "home_workspace_id": next(
+                (membership.workspace_id for membership in memberships if membership.is_home),
+                None,
+            ),
+            "is_global": context.is_global,
+            "can_manage": capabilities["can_manage_active_workspace"],
+            "capabilities": capabilities,
+            "manageable_workspaces": [
+                workspace for workspace in workspace_rows if workspace["can_manage"]
+            ],
+            "workspaces": workspace_rows,
+        }
 
     @staticmethod
     async def require_workspace_role(
@@ -230,10 +316,8 @@ class WorkspaceService:
         is_home: bool,
         actor_id: str,
     ) -> WorkspaceMembership:
-        if membership_role not in {"member", "supervisor"}:
-            raise BadRequestError("membership_role must be member or supervisor")
-        if membership_role == "member" and not is_home:
-            raise BadRequestError("Member assignments must be the user's home workspace")
+        if membership_role != "supervisor":
+            raise BadRequestError("Workspace assignments are only for supervisors")
         workspace = await db.get(Workspace, workspace_id)
         user = await db.get(User, user_id)
         if not workspace or not workspace.is_active:
@@ -251,21 +335,17 @@ class WorkspaceService:
             select(WorkspaceMembership).where(
                 WorkspaceMembership.user_id == user_id,
                 WorkspaceMembership.is_home.is_(True),
+                WorkspaceMembership.is_active.is_(True),
                 WorkspaceMembership.id != (existing.id if existing else ""),
             )
         )
-        if existing and existing.is_home and not is_home:
-            raise BadRequestError("Remove the current home assignment before changing it")
-        if not is_home and not current_home and not (existing and existing.is_home):
-            raise BadRequestError("The first workspace assignment must be the home workspace")
-        if is_home:
-            if current_home:
-                raise BadRequestError("The user already has a home workspace")
+        if is_home and current_home:
+            raise BadRequestError("The user already has a home workspace")
 
         old_values = record_to_dict(existing) if existing else None
         if existing:
             existing.membership_role = membership_role
-            existing.is_home = is_home
+            existing.is_home = is_home or existing.is_home
             existing.is_active = True
             existing.last_modified_by = actor_id
             record = existing

@@ -163,8 +163,11 @@ class DocumentMutationService:
         current_state_raw = getattr(doc, state_field, None) or ""
         current_state = generate_slug(current_state_raw)
 
+        workspace_id = getattr(doc, "workspace_id", None)
         if not current_state:
-            initial = await self.workflow_repo.get_initial_state(entity)
+            initial = await self.workflow_repo.get_initial_state(
+                entity, workspace_id=workspace_id
+            )
             if initial:
                 current_state = initial
             else:
@@ -174,7 +177,13 @@ class DocumentMutationService:
                 )
 
         is_valid, target_state, error = await self.workflow_repo.validate_transition(
-            entity, current_state, action_slug, user=user
+            entity,
+            current_state,
+            action_slug,
+            user=user,
+            record_id=getattr(doc, "id", None),
+            workspace_id=workspace_id,
+            doc=doc,
         )
 
         if not is_valid:

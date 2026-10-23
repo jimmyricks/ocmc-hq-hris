@@ -60,6 +60,19 @@
       "required": false,
       "default": true,
       "in_list_view": true
+    },
+    {
+      "name": "submission_mode",
+      "label": "Submission Mode",
+      "description": "Whether submissions deliver an external link or pasted text",
+      "field_type": "select",
+      "required": false,
+      "default": "link",
+      "options": [
+        "link",
+        "text"
+      ],
+      "in_list_view": true
     }
   ],
   "field_layout": [
@@ -74,7 +87,8 @@
       "unit"
     ],
     [
-      "requires_approval"
+      "requires_approval",
+      "submission_mode"
     ]
   ],
   "rbac": {

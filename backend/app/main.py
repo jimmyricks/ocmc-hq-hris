@@ -58,10 +58,16 @@ async def lifespan(app: FastAPI):
     else:
         from app.core.seeds.workspaces import seed_workspaces
         from app.core.seeds.task_types import seed_task_types
+        from app.core.seeds.workflow_actions import seed_workflow_actions
+        from app.core.seeds.workflow_states import seed_workflow_states
+        from app.core.seeds.workflows import seed_workflows
 
         async with async_session_maker() as db:
             await seed_workspaces(db)
             await seed_task_types(db)
+            await seed_workflow_states(db)
+            await seed_workflow_actions(db)
+            await seed_workflows(db)
 
     # Initialize scheduler through application service
     from app.application.services.scheduling.app_initialization_service import AppInitializationService

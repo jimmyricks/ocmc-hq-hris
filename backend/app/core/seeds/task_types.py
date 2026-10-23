@@ -21,24 +21,26 @@ async def seed_task_types(db: AsyncSession) -> SeedResult:
 
     for workspace in workspaces:
         for name in TASK_TYPES:
+            type_id = str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"ocmc-hq/task-type/{workspace.slug}/{name.lower()}",
+                )
+            )
             existing = await db.execute(
                 select(TaskType.id).where(
                     func.lower(TaskType.name) == name.lower(),
                     TaskType.workspace_id == workspace.id,
                 )
             )
-            if existing.scalar_one_or_none():
+            # A renamed built-in still owns its deterministic id — skip it too.
+            if existing.scalar_one_or_none() or await db.get(TaskType, type_id):
                 result.skipped += 1
                 continue
 
             db.add(
                 TaskType(
-                    id=str(
-                        uuid5(
-                            NAMESPACE_URL,
-                            f"ocmc-hq/task-type/{workspace.slug}/{name.lower()}",
-                        )
-                    ),
+                    id=type_id,
                     workspace_id=workspace.id,
                     name=name,
                     description="Built-in task type.",

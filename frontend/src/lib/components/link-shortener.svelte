@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { toast } from "$lib/notifications";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
   import * as Field from "$lib/components/ui/field/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
   import { Input } from "$lib/components/ui/input";
@@ -10,7 +9,9 @@
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
-  import { apiJSON } from "$lib/api/index.js";
+  import { apiJSON, toPaginatedResult } from "$lib/api/index.js";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
 
   let destination = $state("");
   let customSlug = $state("");
@@ -18,7 +19,11 @@
   let expiresAt = $state("");
   let password = $state("");
   let showPreview = $state(false);
+  const appState = useAppState();
   let links = $state<any[]>([]);
+  let linksPage = $state(appState.tablePage("short-links"));
+  let linksPageSize = $state(20);
+  let linksTotal = $state(0);
   let status = $state("all");
   let search = $state("");
   let loading = $state(true);
@@ -28,17 +33,38 @@
   const publicBase =
     typeof window !== "undefined" ? window.location.origin : "";
 
-  async function load() {
+  async function load(targetPage = linksPage) {
+    loading = true;
     try {
-      const res = await apiJSON(
-        `/api/utils/links?status=${status}&search=${encodeURIComponent(search)}`,
-      );
-      links = res.data?.data ?? [];
+      const params = new URLSearchParams({
+        status,
+        page: String(targetPage),
+        page_size: String(linksPageSize),
+      });
+      if (search.trim()) params.set("search", search.trim());
+      const res = await apiJSON(`/api/utils/links?${params}`);
+      const result = toPaginatedResult<any>(res, targetPage, linksPageSize, [
+        "data",
+        "items",
+      ]);
+      if (!result.items.length && result.total > 0 && targetPage > 1) {
+        return load(Math.ceil(result.total / linksPageSize));
+      }
+      links = result.items;
+      linksTotal = result.total;
+      linksPage = result.page;
+      appState.rememberTablePage("short-links", linksPage);
     } catch (e: any) {
       toast.error(e.message || "Failed to load links");
     } finally {
       loading = false;
     }
+  }
+
+  function setLinksPage(targetPage: number) {
+    linksPage = targetPage;
+    appState.rememberTablePage("short-links", targetPage);
+    void load(targetPage);
   }
 
   async function createLink() {
@@ -62,7 +88,7 @@
       expiresAt = "";
       password = "";
       showPreview = false;
-      await load();
+      setLinksPage(1);
     } catch (e: any) {
       toast.error(e.message || "Failed to create link");
     } finally {
@@ -77,7 +103,7 @@
         body: JSON.stringify({ is_active: !link.is_active }),
       });
       toast.success(link.is_active ? "Link deactivated" : "Link activated");
-      await load();
+      await load(linksPage);
     } catch (e: any) {
       toast.error(e.message || "Failed to update link");
     }
@@ -166,7 +192,7 @@
           <Select.Root
             type="single"
             bind:value={status}
-            onValueChange={() => load()}
+            onValueChange={() => setLinksPage(1)}
           >
             <Select.Trigger size="md" class="w-auto">
               {status === "all"
@@ -189,7 +215,7 @@
           <Input
             placeholder="Search slug or title"
             bind:value={search}
-            onchange={load}
+            onchange={() => setLinksPage(1)}
           />
         </div>
 
@@ -198,30 +224,30 @@
         {:else if links.length === 0}
           <p class="text-base-content/60">No short links yet.</p>
         {:else}
-          <Table.Root>
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Slug</Table.Head>
-                <Table.Head>Title</Table.Head>
-                <Table.Head>Clicks</Table.Head>
-                <Table.Head>Status</Table.Head>
-                <Table.Head class="w-[160px]">Actions</Table.Head>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
+          <table class="table table-zebra">
+            <thead>
+              <tr>
+                <th>Slug</th>
+                <th>Title</th>
+                <th>Clicks</th>
+                <th>Status</th>
+                <th class="w-[160px]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
               {#each links as link (link.id)}
-                <Table.Row>
-                  <Table.Cell>{link.slug}</Table.Cell>
-                  <Table.Cell>{link.title || "—"}</Table.Cell>
-                  <Table.Cell>{link.click_count}</Table.Cell>
-                  <Table.Cell>
+                <tr>
+                  <td>{link.slug}</td>
+                  <td>{link.title || "—"}</td>
+                  <td>{link.click_count}</td>
+                  <td>
                     {#if link.is_active}
                       <Badge variant="default">Active</Badge>
                     {:else}
                       <Badge variant="secondary">Inactive</Badge>
                     {/if}
-                  </Table.Cell>
-                  <Table.Cell>
+                  </td>
+                  <td>
                     <div class="flex gap-1">
                       <Button
                         variant="outline"
@@ -241,11 +267,23 @@
                         onclick={() => view(link.id)}>Details</Button
                       >
                     </div>
-                  </Table.Cell>
-                </Table.Row>
+                  </td>
+                </tr>
               {/each}
-            </Table.Body>
-          </Table.Root>
+            </tbody>
+          </table>
+          <Pagination
+            page={linksPage}
+            pageSize={linksPageSize}
+            total={linksTotal}
+            {loading}
+            pageSizeOptions={[10, 20, 50, 100]}
+            onchange={setLinksPage}
+            onpagesizechange={(size) => {
+              linksPageSize = size;
+              setLinksPage(1);
+            }}
+          />
         {/if}
       </Card.Content>
     </Card.Root>

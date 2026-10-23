@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { dev } from "$app/environment";
-  import { goto } from "$app/navigation";
   import { env } from "$env/dynamic/public";
-  import { login } from "$lib/api/index.js";
-  import { setAuth, getToken } from "$lib/auth";
+  import { getToken } from "$lib/auth";
+  import { useAppState } from "$lib/app-state.svelte.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
   import LoginForm from "$lib/components/login-form.svelte";
+  import WorkspaceLoadingScreen from "$lib/components/workspace-loading-screen.svelte";
 
   type QuickLoginAccount = {
     label: string;
@@ -81,14 +81,16 @@
     })),
   ];
 
+  const appState = useAppState();
   let username = $state("");
   let password = $state("");
   let error = $state("");
   let loading = $state(false);
+  let redirecting = $state(false);
 
   onMount(() => {
     if (getToken()) {
-      goto("/dashboard");
+      window.location.replace("/dashboard");
     }
   });
 
@@ -96,9 +98,9 @@
     error = "";
     loading = true;
     try {
-      const res = await login(user, pass);
-      setAuth(res.access_token, res.user, res.refresh_token);
-      goto("/dashboard");
+      await appState.signIn(user, pass);
+      redirecting = true;
+      window.location.replace("/dashboard");
     } catch (err: any) {
       error = err.message || "Login failed";
     } finally {
@@ -118,47 +120,55 @@
   }
 </script>
 
-<div
-  class="flex min-h-screen flex-col items-center justify-center gap-4 bg-base-200 p-4"
->
-  <LoginForm bind:username bind:password onsubmit={submit} {loading} {error} />
-  {#if dev}
-    <DropdownMenu.Root class="w-full max-w-sm">
-      <DropdownMenu.Trigger class="w-full">
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            variant="outline"
-            class="w-full"
-            disabled={loading}
-          >
-            Quick login
-          </Button>
-        {/snippet}
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content
-        class="max-h-[70vh] w-full overflow-y-auto"
-        align="center"
-      >
-        {#each quickLoginGroups as group (group.label)}
-          <DropdownMenu.Label>{group.label}</DropdownMenu.Label>
-          {#each group.accounts as account (account.username)}
-            <DropdownMenu.Item
-              onclick={() => quickLogin(account)}
-              disabled={loading || !account.password}
-            >
-              <span class="min-w-0">
-                <span class="block truncate">{account.label}</span>
-                <span
-                  class="block truncate text-xs font-normal text-base-content/60"
-                >
-                  {account.username}
-                </span>
-              </span>
-            </DropdownMenu.Item>
+{#if loading || redirecting}
+  <WorkspaceLoadingScreen
+    message="Verifying your account and loading your permissions..."
+  />
+{:else}
+  <div
+    class="flex min-h-screen flex-col items-center justify-center gap-4 bg-base-200 p-4 md:flex-row"
+  >
+    <LoginForm
+      bind:username
+      bind:password
+      onsubmit={submit}
+      {loading}
+      {error}
+    />
+    {#if dev}
+      <Card.Root class="w-full max-w-sm">
+        <Card.Header>
+          <Card.Title class="text-2xl">Quick login</Card.Title>
+          <Card.Description>
+            Dev-only shortcuts to sign in as a persona.
+          </Card.Description>
+        </Card.Header>
+        <Card.Content class="flex flex-col gap-3">
+          {#each quickLoginGroups as group (group.label)}
+            <div>
+              <p class="mb-1 text-xs font-medium text-base-content/60">
+                {group.label}
+              </p>
+              <div class="grid gap-1">
+                {#each group.accounts as account (account.username)}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="w-full justify-between font-normal"
+                    onclick={() => quickLogin(account)}
+                    disabled={loading || !account.password}
+                  >
+                    <span class="truncate">{account.label}</span>
+                    <span class="truncate text-xs text-base-content/60">
+                      {account.username}
+                    </span>
+                  </Button>
+                {/each}
+              </div>
+            </div>
           {/each}
-        {/each}
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
-  {/if}
-</div>
+        </Card.Content>
+      </Card.Root>
+    {/if}
+  </div>
+{/if}

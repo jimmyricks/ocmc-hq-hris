@@ -1,29 +1,36 @@
 import type { Priority, TaskStatus, WorkflowState } from './types.js';
 
 export const STATUS_META: Record<
-	TaskStatus,
+	string,
 	{ label: string; variant: 'default' | 'primary' | 'secondary' | 'destructive' | 'outline' | 'ghost' | 'info' | 'success' | 'warning'; color: string }
 > = {
+	draft: { label: 'Draft', variant: 'outline', color: 'var(--color-base-content)' },
 	pending: { label: 'Pending', variant: 'outline', color: 'var(--color-base-content)' },
 	in_progress: { label: 'In Progress', variant: 'primary', color: 'var(--color-primary)' },
 	for_review: { label: 'For Review', variant: 'warning', color: 'var(--color-warning)' },
+	for_approval: { label: 'For Approval', variant: 'warning', color: 'var(--color-warning)' },
 	submitted: { label: 'Submitted', variant: 'warning', color: 'var(--color-warning)' },
 	needs_revision: { label: 'Needs Revision', variant: 'destructive', color: 'var(--color-error)' },
 	approved: { label: 'Approved', variant: 'success', color: 'var(--color-success)' },
+	done: { label: 'Done', variant: 'success', color: 'var(--color-success)' },
 	closed: { label: 'Closed', variant: 'success', color: 'var(--color-success)' },
 	cancelled: { label: 'Cancelled', variant: 'outline', color: 'var(--color-base-content)' },
 };
 
 // workflow_state IS the task status. See user-journey.md Journey 7.
 export const WORKFLOW_STATE_META: Record<
-	WorkflowState,
+	string,
 	{ label: string; variant: 'default' | 'primary' | 'secondary' | 'destructive' | 'outline' | 'info' | 'success' | 'warning'; color: string }
 > = {
+	draft: { label: 'Draft', variant: 'outline', color: 'var(--color-base-content)' },
 	draft_assigned: { label: 'Draft', variant: 'outline', color: 'var(--color-base-content)' },
+	pending: { label: 'Pending', variant: 'outline', color: 'var(--color-base-content)' },
 	in_progress: { label: 'In Progress', variant: 'primary', color: 'var(--color-primary)' },
 	for_review: { label: 'For Review', variant: 'warning', color: 'var(--color-warning)' },
+	for_approval: { label: 'For Approval', variant: 'warning', color: 'var(--color-warning)' },
 	needs_revision: { label: 'Needs Revision', variant: 'destructive', color: 'var(--color-error)' },
 	approved: { label: 'Approved', variant: 'success', color: 'var(--color-success)' },
+	done: { label: 'Done', variant: 'success', color: 'var(--color-success)' },
 	closed: { label: 'Closed', variant: 'success', color: 'var(--color-success)' },
 };
 
@@ -67,7 +74,20 @@ export function prioritySort(a: Priority, b: Priority): number {
 }
 
 export function statusSort(a: TaskStatus, b: TaskStatus): number {
-	const order: TaskStatus[] = ['pending', 'in_progress', 'for_review', 'submitted', 'needs_revision', 'approved', 'closed', 'cancelled'];
+	const order = [
+		'draft',
+		'draft_assigned',
+		'pending',
+		'in_progress',
+		'for_approval',
+		'for_review',
+		'submitted',
+		'needs_revision',
+		'approved',
+		'done',
+		'closed',
+		'cancelled',
+	];
 	return order.indexOf(a) - order.indexOf(b);
 }
 

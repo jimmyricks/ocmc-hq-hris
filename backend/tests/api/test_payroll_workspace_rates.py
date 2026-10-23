@@ -5,8 +5,9 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select
 
-from app.core.exceptions import BadRequestError, ForbiddenError
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError
 from app.core.framework.models.auth import User
+from app.core.framework.models.infrastructure import WorkflowLedger
 from app.application.services.access_control.row_scope_service import RowScopeService
 from app.api.app.payroll import _require_payroll_admin
 from app.modules.collaboration_audit.models import Ledger
@@ -28,6 +29,48 @@ from app.modules.project_tasks.models import (
 from app.modules.project_tasks.services import TaskApprovalService
 from app.modules.workspaces.models import Workspace, WorkspaceMembership
 from app.modules.workspaces.services import WorkspaceService
+
+
+@pytest.mark.parametrize(
+    ("year", "month", "last_day"),
+    [(2026, 2, 28), (2028, 2, 29), (2026, 4, 30), (2026, 10, 31)],
+)
+def test_bi_monthly_periods_cover_both_halves_of_calendar_month(year, month, last_day):
+    first, second = PayrollService.bi_monthly_periods(year, month)
+    assert first["start_date"] == date(year, month, 1)
+    assert first["end_date"] == first["cutoff"] == date(year, month, 14)
+    assert second["start_date"] == date(year, month, 15)
+    assert second["end_date"] == second["cutoff"] == date(year, month, last_day)
+
+
+@pytest.mark.asyncio
+async def test_period_creation_enforces_canonical_ranges_and_rejects_overlap(
+    db_session, authenticated_user
+):
+    with pytest.raises(BadRequestError, match="days 1–14"):
+        await PayrollService.create_payroll_period(
+            db_session,
+            authenticated_user,
+            {
+                "start_date": date(2026, 10, 1),
+                "end_date": date(2026, 10, 15),
+            },
+        )
+
+    data = {
+        "period_type": "bi_monthly",
+        "start_date": date(2026, 10, 1),
+        "end_date": date(2026, 10, 14),
+        "cutoff": date(2026, 10, 14),
+    }
+    first = await PayrollService.create_payroll_period(
+        db_session, authenticated_user, data
+    )
+    assert first.id
+    with pytest.raises(ConflictError, match="already covers"):
+        await PayrollService.create_payroll_period(
+            db_session, authenticated_user, data
+        )
 
 
 @pytest.mark.asyncio
@@ -227,6 +270,16 @@ async def test_approval_snapshot_survives_rate_change_and_payroll_replay(
     await TaskApprovalService.create_approval(
         db_session, employee, submission.id, "approved"
     )
+    task.status = "done"
+    db_session.add(
+        WorkflowLedger(
+            entity_type="task",
+            record_id=task.id,
+            previous_state="approved",
+            next_state="done",
+            changed_at=datetime(2026, 10, 8, 13),
+        )
+    )
     await db_session.refresh(submission)
     assert submission.approved_rate == Decimal("125.50")
     assert submission.approved_quantity == Decimal("1.00")
@@ -248,7 +301,7 @@ async def test_approval_snapshot_survives_rate_change_and_payroll_replay(
         workspace_id=workspace_id,
         task_type_id=task_type.id,
         title="Outside cutoff",
-        status="approved",
+        status="done",
     )
     late_assignment = TaskAssignment(
         id=record_id_factory("assignment"),
@@ -271,14 +324,59 @@ async def test_approval_snapshot_survives_rate_change_and_payroll_replay(
         approved_quantity=Decimal("1.00"),
         approved_amount=Decimal("250.00"),
     )
-    db_session.add_all([late_task, late_assignment, late_submission])
+    not_done_task = Task(
+        id=record_id_factory("task"),
+        project_id=project.id,
+        workspace_id=workspace_id,
+        task_type_id=task_type.id,
+        title="Approved but not Done",
+        status="approved",
+    )
+    not_done_assignment = TaskAssignment(
+        id=record_id_factory("assignment"),
+        task_id=not_done_task.id,
+        user_id=employee.id,
+        assigned_by=employee.id,
+        idx=1,
+        assigned_at=datetime(2026, 10, 11, 12),
+        is_active=True,
+        status="active",
+    )
+    not_done_submission = TaskSubmission(
+        id=record_id_factory("submission"),
+        task_assignment_id=not_done_assignment.id,
+        version=1,
+        status="approved",
+        submitted_by=employee.id,
+        submitted_at=datetime(2026, 10, 11, 12),
+        approved_rate=Decimal("250.00"),
+        approved_quantity=Decimal("1.00"),
+        approved_amount=Decimal("250.00"),
+    )
+    db_session.add_all(
+        [
+            late_task,
+            late_assignment,
+            late_submission,
+            not_done_task,
+            not_done_assignment,
+            not_done_submission,
+            WorkflowLedger(
+                entity_type="task",
+                record_id=late_task.id,
+                previous_state="approved",
+                next_state="done",
+                changed_at=datetime(2026, 10, 15, 12),
+            ),
+        ]
+    )
     period = PayrollPeriod(
         id=record_id_factory("period"),
         label="October cutoff",
         period_type="bi_monthly",
         start_date=date(2026, 10, 1),
-        end_date=date(2026, 10, 15),
-        cutoff=date(2026, 10, 10),
+        end_date=date(2026, 10, 14),
+        cutoff=date(2026, 10, 14),
         status="open",
     )
     db_session.add(period)
@@ -288,6 +386,7 @@ async def test_approval_snapshot_survives_rate_change_and_payroll_replay(
         db_session, employee, period.id
     )
     assert len(entries) == 1
+    assert entries[0].payroll_period_id == period.id
     assert entries[0].total_amount == Decimal("125.50")
     line = await db_session.scalar(
         select(PayrollLineItem).where(PayrollLineItem.payroll_entry_id == entries[0].id)
@@ -295,12 +394,34 @@ async def test_approval_snapshot_survives_rate_change_and_payroll_replay(
     assert line.rate == Decimal("125.50")
     assert line.quantity == Decimal("1.00")
     assert line.amount == Decimal("125.50")
+    await db_session.refresh(task)
+    assert task.status == "done"
+
+    overlapping_period = PayrollPeriod(
+        id=record_id_factory("period"),
+        label="Duplicate October cutoff",
+        period_type="bi_monthly",
+        start_date=date(2026, 10, 1),
+        end_date=date(2026, 10, 14),
+        cutoff=date(2026, 10, 14),
+        status="open",
+    )
+    db_session.add(overlapping_period)
+    await db_session.flush()
+    with pytest.raises(BadRequestError, match="another payroll period"):
+        await PayrollService.generate_payroll(
+            db_session, employee, overlapping_period.id
+        )
 
     await PayrollService.approve_payroll_entry(db_session, employee, entries[0].id)
-    await PayrollService.pay_payroll_entry(db_session, employee, entries[0].id)
     invoice = await db_session.scalar(
         select(Invoice).where(Invoice.payroll_entry_id == entries[0].id)
     )
+    assert invoice.status == "issued"
+    assert invoice.total_amount == Decimal("125.50")
+    await PayrollService.pay_payroll_entry(db_session, employee, entries[0].id)
+    await db_session.refresh(invoice)
+    assert invoice.status == "paid"
     debit = await db_session.scalar(
         select(Ledger).where(
             Ledger.reference_entity == "payroll_entry",
@@ -472,6 +593,7 @@ async def test_payroll_calculates_employee_and_workspace_rates_with_decimal_tota
         (employee_a2, project_a, type_a_x, Decimal("80.00")),
         (employee_b, project_b, type_b_x, Decimal("90.75")),
     ]
+    tasks = []
     for idx, (employee, project, task_type, rate) in enumerate(work, start=1):
         task = Task(
             id=record_id_factory("task"),
@@ -479,7 +601,7 @@ async def test_payroll_calculates_employee_and_workspace_rates_with_decimal_tota
             workspace_id=project.workspace_id,
             task_type_id=task_type.id,
             title=f"Deliverable {idx}",
-            status="approved",
+            status="done",
         )
         assignment = TaskAssignment(
             id=record_id_factory("assignment"),
@@ -502,15 +624,36 @@ async def test_payroll_calculates_employee_and_workspace_rates_with_decimal_tota
             approved_quantity=Decimal("1.00"),
             approved_amount=rate,
         )
-        db_session.add_all([task, assignment, submission])
+        done_at = (
+            datetime(2026, 10, 1)
+            if idx == 1
+            else datetime(2026, 10, 14, 23, 59, 59)
+            if idx == 2
+            else datetime(2026, 10, 8, 13)
+        )
+        db_session.add_all(
+            [
+                task,
+                assignment,
+                submission,
+                WorkflowLedger(
+                    entity_type="task",
+                    record_id=task.id,
+                    previous_state="approved",
+                    next_state="done",
+                    changed_at=done_at,
+                ),
+            ]
+        )
+        tasks.append(task)
 
     period = PayrollPeriod(
         id=record_id_factory("period"),
         label="All workspace rates",
         period_type="bi_monthly",
         start_date=date(2026, 10, 1),
-        end_date=date(2026, 10, 15),
-        cutoff=date(2026, 10, 15),
+        end_date=date(2026, 10, 14),
+        cutoff=date(2026, 10, 14),
         status="open",
     )
     db_session.add(period)
@@ -520,6 +663,8 @@ async def test_payroll_calculates_employee_and_workspace_rates_with_decimal_tota
         db_session, employee_a1, period.id
     )
     assert len(entries) == 3
+    assert all(entry.payroll_period_id == period.id for entry in entries)
+    assert all(task.status == "done" for task in tasks)
     totals = {entry.user_id: entry.total_amount for entry in entries}
     assert totals == {
         employee_a1.id: Decimal("291.25"),
@@ -626,6 +771,88 @@ async def test_employee_rate_api_validates_workspace_type_and_membership(
 
 
 @pytest.mark.asyncio
+async def test_employee_invoice_endpoint_only_returns_the_current_users_invoices(
+    authenticated_client, db_session, authenticated_user, record_id_factory
+):
+    other_user = User(
+        id=record_id_factory("user"),
+        username=record_id_factory("other"),
+        email=f"{record_id_factory('other')}@example.test",
+        full_name="Other Employee",
+        hashed_password="unused",
+        is_active=True,
+    )
+    period = PayrollPeriod(
+        id=record_id_factory("period"),
+        label="October 1–14",
+        period_type="bi_monthly",
+        start_date=date(2026, 10, 1),
+        end_date=date(2026, 10, 14),
+        cutoff=date(2026, 10, 14),
+        status="open",
+    )
+    db_session.add_all([other_user, period])
+    await db_session.flush()
+
+    own_entry = PayrollEntry(
+        id=record_id_factory("entry"),
+        payroll_period_id=period.id,
+        user_id=authenticated_user.id,
+        total_tasks=1,
+        total_amount=Decimal("100.00"),
+        status="approved",
+    )
+    other_entry = PayrollEntry(
+        id=record_id_factory("entry"),
+        payroll_period_id=period.id,
+        user_id=other_user.id,
+        total_tasks=1,
+        total_amount=Decimal("200.00"),
+        status="approved",
+    )
+    db_session.add_all([own_entry, other_entry])
+    await db_session.flush()
+    own_invoice = Invoice(
+        id=record_id_factory("invoice"),
+        payroll_entry_id=own_entry.id,
+        payroll_period_id=period.id,
+        user_id=authenticated_user.id,
+        invoice_number="INV-OWN",
+        total_tasks=1,
+        total_amount=Decimal("100.00"),
+        currency="PHP",
+        status="issued",
+    )
+    other_invoice = Invoice(
+        id=record_id_factory("invoice"),
+        payroll_entry_id=other_entry.id,
+        payroll_period_id=period.id,
+        user_id=other_user.id,
+        invoice_number="INV-OTHER",
+        total_tasks=1,
+        total_amount=Decimal("200.00"),
+        currency="PHP",
+        status="issued",
+    )
+    db_session.add_all([own_invoice, other_invoice])
+    await db_session.flush()
+
+    matching_entry = await authenticated_client.get(
+        f"/api/payroll/periods/{period.id}/entries/{own_entry.id}"
+    )
+    mismatched_entry = await authenticated_client.get(
+        f"/api/payroll/periods/{record_id_factory('period')}/entries/{own_entry.id}"
+    )
+    response = await authenticated_client.get("/api/payroll/my-invoices")
+
+    assert matching_entry.status_code == 200
+    assert matching_entry.json()["data"]["payroll_period_id"] == period.id
+    assert mismatched_entry.status_code == 404
+    assert response.status_code == 200
+    assert [invoice["id"] for invoice in response.json()["data"]] == [own_invoice.id]
+
+
+@pytest.mark.asyncio
 async def test_payroll_requires_manual_resolution_for_legacy_approval_without_snapshot(
     db_session, authenticated_user, record_id_factory
 ):
@@ -656,7 +883,7 @@ async def test_payroll_requires_manual_resolution_for_legacy_approval_without_sn
         workspace_id=workspace.id,
         task_type_id=task_type.id,
         title="Legacy approval",
-        status="approved",
+        status="done",
     )
     assignment = TaskAssignment(
         id=record_id_factory("assignment"),
@@ -681,12 +908,27 @@ async def test_payroll_requires_manual_resolution_for_legacy_approval_without_sn
         label="Legacy review",
         period_type="bi_monthly",
         start_date=date(2026, 10, 1),
-        end_date=date(2026, 10, 15),
-        cutoff=date(2026, 10, 15),
+        end_date=date(2026, 10, 14),
+        cutoff=date(2026, 10, 14),
         status="open",
     )
     db_session.add_all(
-        [workspace, project, task_type, task, assignment, submission, period]
+        [
+            workspace,
+            project,
+            task_type,
+            task,
+            assignment,
+            submission,
+            period,
+            WorkflowLedger(
+                entity_type="task",
+                record_id=task.id,
+                previous_state="approved",
+                next_state="done",
+                changed_at=datetime(2026, 10, 8, 13),
+            ),
+        ]
     )
     await db_session.flush()
 

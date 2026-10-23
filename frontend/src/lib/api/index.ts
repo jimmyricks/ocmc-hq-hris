@@ -200,6 +200,87 @@ export type EntityFilter = {
 	value: any;
 };
 
+export interface PaginatedResult<T> {
+	items: T[];
+	total: number;
+	page: number;
+	page_size: number;
+}
+
+export interface EntityListOptions {
+	filterField?: string;
+	filterValue?: string;
+	sortField?: string;
+	sortOrder?: 'asc' | 'desc';
+}
+
+export function toPaginatedResult<T>(
+	response: Record<string, any>,
+	fallbackPage = 1,
+	fallbackPageSize = 20,
+	itemKeys: string[] = ['items', 'data', 'users'],
+): PaginatedResult<T> {
+	const data = response.data;
+	const items = Array.isArray(data)
+		? data
+		: (itemKeys
+				.map((key) => data?.[key])
+				.find((value) => Array.isArray(value)) ?? []);
+	return {
+		items: items as T[],
+		total: Number(response.total ?? data?.total ?? items.length),
+		page: Number(response.page ?? data?.page ?? fallbackPage),
+		page_size: Number(response.page_size ?? data?.page_size ?? fallbackPageSize),
+	};
+}
+
+function entityListQuery(
+	page: number,
+	pageSize: number,
+	options: EntityListOptions = {},
+	filters: EntityFilter[] = [],
+): string {
+	const params = new URLSearchParams({
+		page: String(page),
+		page_size: String(pageSize),
+	});
+	if (filters.length) params.set('filters', JSON.stringify(filters));
+	if (options.filterField && options.filterValue !== undefined) {
+		params.set('filter_field', options.filterField);
+		params.set('filter_value', options.filterValue);
+	}
+	if (options.sortField) {
+		params.set('sort_field', options.sortField);
+		params.set('sort_order', options.sortOrder ?? 'desc');
+	}
+	return params.toString();
+}
+
+export async function listEntityPage<T = Record<string, any>>(
+	entity: string,
+	page = 1,
+	pageSize = 20,
+	options: EntityListOptions = {},
+): Promise<PaginatedResult<T>> {
+	const normalized = normalizeEntity(entity);
+	const response = await apiJSON(`/api/entity/${normalized}/list?${entityListQuery(page, pageSize, options)}`);
+	return toPaginatedResult<T>(response, page, pageSize);
+}
+
+export async function listFilteredPage<T = Record<string, any>>(
+	entity: string,
+	filters: EntityFilter[],
+	page = 1,
+	pageSize = 100,
+	options: EntityListOptions = {},
+): Promise<PaginatedResult<T>> {
+	const normalized = normalizeEntity(entity);
+	const response = await apiJSON(
+		`/api/entity/${normalized}/list?${entityListQuery(page, pageSize, options, filters)}`,
+	);
+	return toPaginatedResult<T>(response, page, pageSize);
+}
+
 export async function listEntity(entity: string, page = 1, pageSize = 20) {
 	const normalized = normalizeEntity(entity);
 	return apiJSON(`/api/entity/${normalized}/list?page=${page}&page_size=${pageSize}`);

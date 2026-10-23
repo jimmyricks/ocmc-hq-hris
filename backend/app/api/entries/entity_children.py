@@ -380,13 +380,25 @@ async def bulk_save_child_records(
                 if (
                     child_meta.workflow and child_meta.workflow.enabled
                     and raw_data.get("workflow_state") in (None, "")
-                    and child_meta.workflow.initial_state
                 ):
-                    raw_data["workflow_state"] = child_meta.workflow.initial_state
+                    try:
+                        initial_state = await workflow_service.get_initial_state(
+                            child_entity,
+                            workspace_id=raw_data.get("workspace_id"),
+                        )
+                        if initial_state:
+                            raw_data["workflow_state"] = initial_state
+                    except Exception:
+                        pass
+                    if not raw_data.get("workflow_state") and child_meta.workflow.initial_state:
+                        raw_data["workflow_state"] = child_meta.workflow.initial_state
 
                 if raw_data.get("workflow_state") in (None, "") and hasattr(child_model, "workflow_state"):
                     try:
-                        initial_state = await workflow_service.get_initial_state(child_entity)
+                        initial_state = await workflow_service.get_initial_state(
+                            child_entity,
+                            workspace_id=raw_data.get("workspace_id"),
+                        )
                         if initial_state:
                             raw_data["workflow_state"] = initial_state
                     except Exception:

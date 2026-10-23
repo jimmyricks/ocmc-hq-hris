@@ -33,7 +33,13 @@
   function handleTriggerClick(
     event: MouseEvent & { currentTarget: EventTarget & HTMLElement },
   ) {
+    event.preventDefault();
+    menu.toggle();
     onclick?.(event);
+    if (!event.defaultPrevented) {
+      event.preventDefault();
+      menu.toggle();
+    }
   }
 </script>
 
@@ -63,5 +69,11 @@
   }
   .dropdown-trigger::marker {
     content: "";
+  }
+  /* daisyUI sets pointer-events:none on a focused .dropdown's first [tabindex]
+     child (meant for its focus-based dropdowns). This menu toggles via JS, so
+     keep the trigger clickable or the opening click is swallowed mid-flight. */
+  :global(.dropdown:focus-within) > .dropdown-trigger:first-child {
+    pointer-events: auto;
   }
 </style>

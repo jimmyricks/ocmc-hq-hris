@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +8,7 @@ from app.api.dependencies import get_db
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.core.framework.models.auth import User
 from app.core.security import CurrentUser, require_authenticated_user
-from app.modules.project_tasks.models import Project, Task, TaskType
+from app.modules.project_tasks.models import Project, ProjectMember, Task, TaskType
 from app.modules.workspaces.models import Workspace, WorkspaceMembership, WorkspaceTeam
 from app.modules.workspaces.services import WorkspaceService
 from app.modules.collaboration_audit.services import AuditLogService
@@ -31,7 +31,7 @@ class WorkspaceUpdateRequest(BaseModel):
 
 class MembershipRequest(BaseModel):
     user_id: str
-    membership_role: str = "member"
+    membership_role: str = "supervisor"
     is_home: bool = False
 
 
@@ -107,85 +107,13 @@ async def get_workspace_context(
     db: AsyncSession = Depends(get_db),
     workspace_id: str | None = Header(None, alias="X-Workspace-ID"),
 ):
-    context = await WorkspaceService.resolve_context(
-        db,
-        current_user.id,
-        current_user.roles,
-        current_user.is_superuser,
-        workspace_id,
-    )
-    workspaces = await WorkspaceService.visible_workspaces(
-        db, current_user.id, current_user.roles, current_user.is_superuser
-    )
-    memberships = (
-        await db.scalars(
-            select(WorkspaceMembership)
-            .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
-            .where(
-                WorkspaceMembership.user_id == current_user.id,
-                WorkspaceMembership.is_active.is_(True),
-                Workspace.is_active.is_(True),
-            )
-        )
-    ).all()
-    memberships_by_workspace = {
-        membership.workspace_id: membership for membership in memberships
-    }
-    active_membership = memberships_by_workspace.get(context.active_workspace_id)
-    active_role = active_membership.membership_role if active_membership else None
-    capabilities = _capabilities(
-        current_user,
-        active_role,
-        any(item.membership_role == "supervisor" for item in memberships),
-    )
-    is_admin = capabilities["is_system_admin"]
-    manageable_workspaces = [
-        _workspace_dict(workspace)
-        for workspace in workspaces
-        if capabilities["is_system_admin"]
-        or (
-            memberships_by_workspace.get(workspace.id)
-            and memberships_by_workspace[workspace.id].membership_role == "supervisor"
-        )
-    ]
     return {
         "status": "success",
-        "data": {
-            "active_workspace_id": context.active_workspace_id,
-            "home_workspace_id": next(
-                (
-                    membership.workspace_id
-                    for membership in memberships
-                    if membership.is_home
-                ),
-                None,
-            ),
-            "is_global": context.is_global,
-            "can_manage": capabilities["can_manage_active_workspace"],
-            "capabilities": capabilities,
-            "manageable_workspaces": manageable_workspaces,
-            "workspaces": [
-                {
-                    **_workspace_dict(workspace),
-                    "membership_role": (
-                        memberships_by_workspace[workspace.id].membership_role
-                        if workspace.id in memberships_by_workspace
-                        else None
-                    ),
-                    "is_home": bool(
-                        memberships_by_workspace.get(workspace.id)
-                        and memberships_by_workspace[workspace.id].is_home
-                    ),
-                    "can_manage": is_admin
-                    or bool(
-                        memberships_by_workspace.get(workspace.id)
-                        and memberships_by_workspace[workspace.id].membership_role
-                        == "supervisor"
-                    ),
-                }
-                for workspace in workspaces
-            ],
-        },
+        "data": await WorkspaceService.get_context_payload(
+            db,
+            current_user,
+            workspace_id,
+        ),
     }
 
 
@@ -194,7 +122,12 @@ async def list_project_user_directory(
     current_user: CurrentUser = Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
     workspace_id: str | None = Header(None, alias="X-Workspace-ID"),
+    search: str | None = Query(None, min_length=1, max_length=100),
+    project_id: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int | None = Query(None, ge=1, le=100),
 ):
+    """List/search users, optionally scoped to active members of a project."""
     context = await WorkspaceService.resolve_context(
         db,
         current_user.id,
@@ -205,31 +138,72 @@ async def list_project_user_directory(
     is_system_admin = WorkspaceService.is_system_admin(
         current_user.roles, current_user.is_superuser
     )
-    if not is_system_admin:
-        if not context.active_workspace_id:
-            raise ForbiddenError("Select an assigned workspace first")
+    # HR may browse the global user directory (mirrors /hr-directory).
+    is_hr = WorkspaceService.is_hr(current_user.roles)
+    project = await db.get(Project, project_id) if project_id else None
+    if project_id and (not project or not project.workspace_id):
+        raise ForbiddenError("Project is unavailable in this workspace")
+
+    is_workspace_supervisor = False
+    if context.active_workspace_id:
         role = await db.scalar(
             select(WorkspaceMembership.membership_role).where(
                 WorkspaceMembership.workspace_id == context.active_workspace_id,
                 WorkspaceMembership.user_id == current_user.id,
+                WorkspaceMembership.membership_role == "supervisor",
                 WorkspaceMembership.is_active.is_(True),
             )
         )
-        if role != "supervisor":
-            raise ForbiddenError("Only workspace supervisors can browse the project directory")
+        is_workspace_supervisor = role == "supervisor"
+
+    if not is_system_admin and not is_hr:
+        if project:
+            project_member = await db.scalar(
+                select(ProjectMember.id).where(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_id == current_user.id,
+                    ProjectMember.is_active.is_(True),
+                )
+            )
+            manages_workspace = (
+                is_workspace_supervisor
+                and context.active_workspace_id == project.workspace_id
+            )
+            if not manages_workspace and not project_member and (
+                project.manager_id != current_user.id
+            ):
+                raise ForbiddenError("Project membership is required for this directory")
+        elif not context.active_workspace_id or not is_workspace_supervisor:
+            raise ForbiddenError(
+                "Only workspace supervisors can browse the project directory"
+            )
+    user_query = select(User).where(User.is_active.is_(True))
+    if project:
         user_query = (
-            select(User)
-            .join(WorkspaceMembership, WorkspaceMembership.user_id == User.id)
-            .where(
-                WorkspaceMembership.workspace_id == context.active_workspace_id,
-                WorkspaceMembership.is_active.is_(True),
-                User.is_active.is_(True),
+            user_query.join(
+                ProjectMember,
+                (ProjectMember.user_id == User.id)
+                & (ProjectMember.project_id == project_id)
+                & (ProjectMember.is_active.is_(True)),
             )
+            .distinct()
         )
-    else:
-        user_query = select(User).where(User.is_active.is_(True))
+    if search:
+        pattern = f"%{search.strip()}%"
+        user_query = user_query.where(
+            User.full_name.ilike(pattern)
+            | User.username.ilike(pattern)
+            | User.email.ilike(pattern)
+        )
+
+    total = None
+    if page_size is not None:
+        total = await db.scalar(
+            select(func.count()).select_from(user_query.order_by(None).subquery())
+        )
+        user_query = user_query.offset((page - 1) * page_size).limit(page_size)
     users = await db.scalars(user_query.order_by(User.full_name, User.username))
-    return {
+    result = {
         "status": "success",
         "data": [
             {
@@ -242,6 +216,9 @@ async def list_project_user_directory(
             for user in users
         ],
     }
+    if page_size is not None:
+        result.update({"total": total or 0, "page": page, "page_size": page_size})
+    return result
 
 
 @router.get("/hr-directory")
@@ -308,6 +285,7 @@ async def select_workspace_context(
             select(WorkspaceMembership.membership_role).where(
                 WorkspaceMembership.workspace_id == context.active_workspace_id,
                 WorkspaceMembership.user_id == current_user.id,
+                WorkspaceMembership.membership_role == "supervisor",
                 WorkspaceMembership.is_active.is_(True),
             )
         )
@@ -321,6 +299,7 @@ async def select_workspace_context(
             .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
             .where(
                 WorkspaceMembership.user_id == current_user.id,
+                WorkspaceMembership.membership_role == "supervisor",
                 WorkspaceMembership.is_active.is_(True),
                 Workspace.is_active.is_(True),
             )
@@ -357,6 +336,7 @@ async def select_workspace_context(
                     .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
                     .where(
                         WorkspaceMembership.user_id == current_user.id,
+                        WorkspaceMembership.membership_role == "supervisor",
                         WorkspaceMembership.is_home.is_(True),
                         WorkspaceMembership.is_active.is_(True),
                         Workspace.is_active.is_(True),
@@ -693,6 +673,7 @@ async def list_workspace_memberships(
     result = await db.execute(
         select(WorkspaceMembership).where(
             WorkspaceMembership.workspace_id == workspace_id,
+            WorkspaceMembership.membership_role == "supervisor",
             WorkspaceMembership.is_active.is_(True),
         )
     )

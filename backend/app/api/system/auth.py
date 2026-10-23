@@ -12,8 +12,19 @@ from jose import jwt
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.framework.models.auth import User, Role
-from app.api.system.meta import get_meta_list, MODULE_ICONS, MODULE_LABELS, _module_order_key
+from app.core.framework.models.auth import EntityPermission, User
+from app.core.exceptions import APIException
+from app.core.security import CurrentUser, is_system_admin_user, require_authenticated_user
+from app.modules.workspaces.services import WorkspaceService
+from app.api.system.meta import (
+    MODULE_ICONS,
+    MODULE_LABELS,
+    _aggregate_permissions,
+    _module_order_key,
+    get_meta_list_for_user,
+)
+from app.core.constants.permissions import PERMISSION_FLAGS, ROW_SCOPE_ALL
+from app.meta.registry import MetaRegistry
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,6 +34,16 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     result = await db.execute(
         select(User)
         .where(User.username == username)
+        .options(selectinload(User.roles))
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_user_by_id(db: AsyncSession, user_id: str) -> User | None:
+    """Get an active user with roles for authenticated bootstrap."""
+    result = await db.execute(
+        select(User)
+        .where(User.id == user_id)
         .options(selectinload(User.roles))
     )
     return result.scalar_one_or_none()
@@ -140,6 +161,135 @@ def _build_sidebar_navigation(sidebar_entities: list[dict]) -> list[dict]:
     return navigation
 
 
+def _user_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "full_name": user.full_name,
+        "is_superuser": user.is_superuser,
+        "roles": [r.name for r in user.roles],
+    }
+
+
+async def _permission_map_for_user(
+    db: AsyncSession,
+    current_user: CurrentUser,
+) -> dict[str, dict]:
+    """Return every entity permission needed by the authenticated shell."""
+    if is_system_admin_user(current_user):
+        permissions = {}
+        for entity in MetaRegistry.list_all():
+            entity_permissions = {flag: True for flag in PERMISSION_FLAGS}
+            entity_permissions["in_sidebar"] = entity.in_sidebar
+            entity_permissions["row_scope"] = [ROW_SCOPE_ALL]
+            permissions[entity.name] = entity_permissions
+        return permissions
+
+    if not current_user.role_ids:
+        return {}
+
+    result = await db.execute(
+        select(EntityPermission).where(
+            EntityPermission.role_id.in_(current_user.role_ids)
+        )
+    )
+    return _aggregate_permissions(result.scalars().all())
+
+
+async def _build_boot_payload(
+    db: AsyncSession,
+    user: User,
+    requested_workspace_id: str | None = None,
+) -> dict:
+    """Assemble the permission-scoped shell bootstrap for a user."""
+    current_user = CurrentUser(
+        id=str(user.id),
+        username=user.username,
+        roles=[r.name for r in user.roles],
+        role_ids=[r.id for r in user.roles],
+        employee_id=user.employee_id,
+        is_superuser=user.is_superuser,
+    )
+
+    meta_response = await get_meta_list_for_user(db, current_user)
+    meta_list = meta_response.get("data", [])
+    sidebar_entities = [m for m in meta_list if m.get("in_sidebar", False)]
+    navigation = _build_sidebar_navigation(sidebar_entities)
+    permissions = await _permission_map_for_user(db, current_user)
+
+    from app.application.services.dashboards.config import DASHBOARD_DEFINITIONS, DashboardConfigProvider
+    from app.infrastructure.database.repositories.dashboard_repository import DashboardRepository
+    from app.application.services.dashboards.orchestrator import DashboardOrchestrator
+
+    dashboard_repo = DashboardRepository(db)
+    dashboard_service = DashboardOrchestrator(dashboard_repo, current_user)
+    widget_configs = dashboard_service.resolve_user_widgets()
+    widget_types = [cfg["type"] for cfg in widget_configs]
+    allowed_keys = DashboardConfigProvider.resolve_allowed_dashboard_keys(
+        widget_types,
+        current_user.is_superuser,
+    )
+    allowed_dashboards = DashboardConfigProvider.build_allowed_dashboards_list(allowed_keys)
+    allowed_dashboards_with_config = []
+    for dashboard in allowed_dashboards:
+        definition = DASHBOARD_DEFINITIONS.get(dashboard["key"])
+        if definition:
+            allowed_dashboards_with_config.append({
+                **dashboard,
+                "stats": definition.get("stats", []),
+                "charts": definition.get("charts", []),
+            })
+        else:
+            allowed_dashboards_with_config.append(dashboard)
+
+    from app.core.framework.models.workflow_state import WorkflowState
+    result = await db.execute(select(WorkflowState).order_by(WorkflowState.label.asc()))
+    workflow_states = [
+        {"id": s.id, "label": s.label, "slug": s.slug, "color": s.color}
+        for s in result.scalars().all()
+    ]
+
+    from pathlib import Path
+    from app.infrastructure.settings import BrandingStore
+    from app.application.services.branding_service import BrandingService
+    uploads_root = Path(settings.UPLOAD_DIR)
+    settings_dir = uploads_root / "settings"
+    branding_service = BrandingService(
+        store=BrandingStore(settings_dir / "branding.json"),
+        assets_dir=settings_dir / "branding",
+        uploads_root=uploads_root,
+    )
+    branding_settings = branding_service.get_branding()
+
+    try:
+        workspace_context = await WorkspaceService.get_context_payload(
+            db,
+            current_user,
+            requested_workspace_id,
+        )
+    except APIException:
+        workspace_context = None
+
+    from app.core.feature_flags import is_po_enabled
+
+    return {
+        "user": _user_payload(user),
+        "sidebar": {
+            "entities": sidebar_entities,
+            "navigation": navigation,
+        },
+        "permissions": permissions,
+        "allowed_dashboards": allowed_dashboards_with_config,
+        "workflow_states": workflow_states,
+        "branding_settings": branding_settings,
+        "workspace_context": workspace_context,
+        "feature_flags": {
+            "purchase_order_enabled": is_po_enabled(),
+        },
+    }
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
     return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
@@ -166,6 +316,7 @@ async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = Header(None, alias="X-Workspace-ID"),
 ):
     """Authenticate user and return access token."""
     user = await get_user_by_username(db, form_data.username)
@@ -200,23 +351,11 @@ async def login(
         path="/",
     )
     
-    from app.core.feature_flags import is_po_enabled
-
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "is_superuser": user.is_superuser,
-            "roles": [r.name for r in user.roles],
-        },
-        "feature_flags": {
-            "purchase_order_enabled": is_po_enabled(),
-        },
+        **(await _build_boot_payload(db, user, workspace_id)),
     }
 
 
@@ -225,23 +364,24 @@ async def boot_info(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = Header(None, alias="X-Workspace-ID"),
 ):
-    """Authenticate user and return complete boot info including sidebar entities."""
+    """Authenticate user and return the complete permission-scoped shell boot."""
     user = await get_user_by_username(db, form_data.username)
-    
+
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User account is disabled",
         )
-    
+
     access_token = create_access_token(
         data={"sub": user.username, "user_id": user.id}
     )
@@ -258,96 +398,29 @@ async def boot_info(
         max_age=int(settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60),
         path="/",
     )
-    
-    # Get sidebar entities
-    meta_response = await get_meta_list(db=db, authorization=f"Bearer {access_token}")
-    meta_list = meta_response.get("data", [])
-    
-    sidebar_entities = [m for m in meta_list if m.get("in_sidebar", False)]
-    navigation = _build_sidebar_navigation(sidebar_entities)
-    
-    # Get allowed dashboards
-    from app.core.security import CurrentUser
-    from app.application.services.dashboards.config import DASHBOARD_DEFINITIONS, DASHBOARD_ORDER, WIDGET_DASHBOARD_MAP, DashboardConfigProvider
-    from app.infrastructure.database.repositories.dashboard_repository import DashboardRepository
-    from app.application.services.dashboards.orchestrator import DashboardOrchestrator
-    
-    current_user = CurrentUser(
-        id=str(user.id),
-        username=user.username,
-        is_superuser=user.is_superuser,
-        roles=[r.name for r in user.roles]
-    )
-    dashboard_repo = DashboardRepository(db)
-    dashboard_service = DashboardOrchestrator(dashboard_repo, current_user)
-    widget_configs = dashboard_service.resolve_user_widgets()
-
-    # Resolve allowed dashboards using config provider
-    config = DashboardConfigProvider
-    widget_types = [cfg["type"] for cfg in widget_configs]
-    allowed_keys = config.resolve_allowed_dashboard_keys(widget_types, current_user.is_superuser)
-    allowed_dashboards = config.build_allowed_dashboards_list(allowed_keys)
-    
-    # Add stats and charts to each allowed dashboard from DASHBOARD_DEFINITIONS
-    allowed_dashboards_with_config = []
-    for dashboard in allowed_dashboards:
-        definition = DASHBOARD_DEFINITIONS.get(dashboard["key"])
-        if definition:
-            allowed_dashboards_with_config.append({
-                **dashboard,
-                "stats": definition.get("stats", []),
-                "charts": definition.get("charts", []),
-            })
-        else:
-            allowed_dashboards_with_config.append(dashboard)
-    
-    # Get workflow states
-    from app.core.framework.models.workflow_state import WorkflowState
-    from sqlalchemy import select
-    result = await db.execute(select(WorkflowState).order_by(WorkflowState.label.asc()))
-    workflow_states = [
-        {"id": s.id, "label": s.label, "slug": s.slug, "color": s.color}
-        for s in result.scalars().all()
-    ]
-    
-    # Get branding settings
-    from pathlib import Path
-    from app.infrastructure.settings import BrandingStore
-    from app.application.services.branding_service import BrandingService
-    uploads_root = Path(settings.UPLOAD_DIR)
-    settings_dir = uploads_root / "settings"
-    branding_service = BrandingService(
-        store=BrandingStore(settings_dir / "branding.json"),
-        assets_dir=settings_dir / "branding",
-        uploads_root=uploads_root,
-    )
-    branding_settings = branding_service.get_branding()
-    
-    from app.core.feature_flags import is_po_enabled
 
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "is_superuser": user.is_superuser,
-            "roles": [r.name for r in user.roles],
-        },
-        "sidebar": {
-            "entities": sidebar_entities,
-            "navigation": navigation,
-        },
-        "allowed_dashboards": allowed_dashboards_with_config,
-        "workflow_states": workflow_states,
-        "branding_settings": branding_settings,
-        "feature_flags": {
-            "purchase_order_enabled": is_po_enabled(),
-        },
+        **(await _build_boot_payload(db, user, workspace_id)),
     }
+
+
+@router.get("/boot")
+async def get_boot_info(
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = Header(None, alias="X-Workspace-ID"),
+):
+    """Return bootstrap data for an existing authenticated session."""
+    user = await get_user_by_id(db, current_user.id)
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+    return await _build_boot_payload(db, user, workspace_id)
 
 
 @router.post("/refresh")

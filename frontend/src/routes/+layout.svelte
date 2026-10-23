@@ -1,17 +1,17 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import favicon from "$lib/assets/favicon.svg";
   import "../app.css";
-  import { getToken, getUser } from "$lib/auth";
-  import { workspaceApi } from "$lib/workspaces/api";
+  import { getToken } from "$lib/auth";
+  import { createAppState } from "$lib/app-state.svelte.js";
   import { theme, toggleTheme } from "$lib/theme";
-  import { setActiveWorkspaceId } from "$lib/workspaces/context";
-  import type { WorkspaceContext } from "$lib/workspaces/types";
   import AppSidebar from "$lib/components/app-sidebar.svelte";
   import AssistantChat from "$lib/components/assistant-chat.svelte";
   import Breadcrumbs from "$lib/components/breadcrumbs.svelte";
   import Toaster from "$lib/components/toaster.svelte";
+  import WorkspaceLoadingScreen from "$lib/components/workspace-loading-screen.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import MenuIcon from "@lucide/svelte/icons/menu";
@@ -19,12 +19,13 @@
   import SunIcon from "@lucide/svelte/icons/sun";
 
   let { children } = $props();
+  const appState = createAppState();
   let isPublic = $derived(page.url.pathname === "/login");
   let navOpen = $state(false);
 
-  let workspaceContext = $state<WorkspaceContext | null>(null);
+  const workspaceContext = $derived(appState.workspaceContext);
   let switchingWorkspace = $state(false);
-  const user = $derived(browser ? getUser() : null);
+  const user = $derived(appState.user);
   const isSystemAdmin = $derived(
     workspaceContext?.capabilities?.is_system_admin ??
       Boolean(
@@ -51,13 +52,13 @@
   );
 
   $effect(() => {
-    if (!browser || !getToken() || workspaceContext || isPublic) return;
-    workspaceApi
-      .getContext()
-      .then((context) => (workspaceContext = context))
-      .catch((error) =>
-        console.error("Failed to load workspace context:", error),
-      );
+    if (!browser || isPublic) return;
+    if (!getToken()) {
+      void goto("/login");
+      return;
+    }
+    if (appState.boot) return;
+    void appState.ensureBoot();
   });
 
   async function handleWorkspaceChange(value: string) {
@@ -65,8 +66,7 @@
     const workspaceId = value === "all" ? null : value;
     switchingWorkspace = true;
     try {
-      await workspaceApi.select(workspaceId);
-      setActiveWorkspaceId(workspaceId);
+      await appState.selectWorkspace(workspaceId);
       window.location.reload();
     } catch (error) {
       console.error("Failed to switch workspace:", error);
@@ -124,6 +124,11 @@
   <div class="min-h-screen bg-base-200 text-base-content">
     {@render children()}
   </div>
+{:else if !browser || !getToken() || !appState.bootReady}
+  <WorkspaceLoadingScreen
+    message={appState.bootError ||
+      "Checking your permissions and loading your workspace..."}
+  />
 {:else}
   <div class="drawer min-h-screen lg:drawer-open">
     <input
@@ -134,7 +139,7 @@
     />
     <div class="drawer-content min-h-screen">
       <header
-        class="sticky top-0 z-20 flex min-h-14 items-center gap-3 border-b border-base-300 bg-base-100/90 px-4 backdrop-blur sm:px-6"
+        class="sticky top-0 z-20 flex min-h-16 items-center gap-3 border-b border-base-300 bg-base-100/90 px-4 backdrop-blur sm:px-6"
       >
         <Button
           variant="ghost"

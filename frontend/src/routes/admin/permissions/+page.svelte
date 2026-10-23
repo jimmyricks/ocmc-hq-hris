@@ -1,95 +1,150 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import * as Table from "$lib/components/ui/table/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
   import { Spinner } from "$lib/components/ui/spinner/index.js";
   import * as Empty from "$lib/components/ui/empty/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import { Checkbox } from "$lib/components/ui/checkbox/index.js";
   import { apiJSON } from "$lib/api/index.js";
   import { toast } from "$lib/notifications";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
   import ShieldIcon from "@lucide/svelte/icons/shield";
 
-  interface Permission {
-    id: string;
+  interface EntityRow {
     name: string;
-    description: string;
+    label: string;
+    module: string;
+    sort_order: number;
   }
 
   interface Role {
     id: string;
     name: string;
-    permissions: Array<{ id: string; name: string }>;
   }
 
-  let permissions = $state<Permission[]>([]);
+  type PermissionFlags = {
+    can_read?: boolean;
+    can_create?: boolean;
+    can_update?: boolean;
+    can_delete?: boolean;
+    can_select?: boolean;
+    can_export?: boolean;
+    can_import?: boolean;
+    in_sidebar?: boolean;
+    row_scope?: string | string[];
+  };
+
+  const appState = useAppState();
+  const permissionColumns = [
+    ["can_read", "Read"],
+    ["can_create", "Create"],
+    ["can_update", "Update"],
+    ["can_delete", "Delete"],
+    ["in_sidebar", "Sidebar"],
+  ] as const;
+
+  let entities = $state<EntityRow[]>([]);
   let roles = $state<Role[]>([]);
-  let loading = $state(true);
-  let selectedRoleId = $state<string>("");
-  let saving = $state(false);
-
+  let rolePermissions = $state<Record<string, PermissionFlags>>({});
+  let selectedRoleId = $state("");
   let selectedRole = $derived(
-    roles.find((r) => r.id === selectedRoleId) ?? null,
+    roles.find((role) => role.id === selectedRoleId) ?? null,
   );
+  let loading = $state(true);
+  let roleLoading = $state(false);
+  let saving = $state(false);
+  let entitiesPage = $state(appState.tablePage("admin-permissions"));
+  let entitiesPageSize = $state(25);
+  let entitiesTotal = $state(0);
+  let roleRequest = 0;
 
-  // Map of permission IDs that the selected role has
-  let rolePermissionIds = $state<Set<string>>(new Set());
-
-  function syncRolePermissions() {
-    rolePermissionIds = new Set(
-      selectedRole?.permissions.map((p) => p.id) ?? [],
-    );
-  }
-
-  $effect(() => {
-    // Re-sync when the selected role changes
-    selectedRole;
-    syncRolePermissions();
-  });
-
-  async function loadData() {
+  async function loadEntities(page = entitiesPage) {
     loading = true;
     try {
-      const [permData, roleData] = await Promise.all([
-        apiJSON("/api/admin/permissions"),
-        apiJSON("/api/admin/roles"),
-      ]);
-      permissions = permData.data || [];
-      roles = roleData.data || [];
-      if (roles.length > 0 && !selectedRoleId) {
-        selectedRoleId = roles[0].id;
+      const response = await apiJSON(
+        `/api/admin/permissions/entities?page=${page}&page_size=${entitiesPageSize}`,
+      );
+      const data = response.data ?? {};
+      const result = (data.rows ?? []) as EntityRow[];
+      const total = Number(data.total ?? data.total_entities ?? result.length);
+      if (!result.length && total > 0 && page > 1) {
+        return loadEntities(Math.ceil(total / entitiesPageSize));
       }
-      syncRolePermissions();
+      entities = result;
+      entitiesTotal = total;
+      entitiesPage = Number(data.page ?? page);
+      appState.rememberTablePage("admin-permissions", entitiesPage);
     } catch (error) {
-      console.error("Failed to load data:", error);
+      console.error("Failed to load entities:", error);
+      toast.error("Failed to load permissions");
     } finally {
       loading = false;
     }
   }
 
-  function togglePermission(permId: string, checked: boolean) {
-    const next = new Set(rolePermissionIds);
-    if (checked) {
-      next.add(permId);
-    } else {
-      next.delete(permId);
+  async function loadRoles() {
+    try {
+      const response = await apiJSON("/api/admin/roles");
+      roles = response.data ?? [];
+      if (roles.length && !selectedRoleId) selectedRoleId = roles[0].id;
+    } catch (error) {
+      console.error("Failed to load roles:", error);
+      toast.error("Failed to load roles");
     }
-    rolePermissionIds = next;
+  }
+
+  async function loadRolePermissions(roleId: string) {
+    const request = ++roleRequest;
+    roleLoading = true;
+    try {
+      const response = await apiJSON(`/api/admin/permissions/role/${roleId}`);
+      if (request !== roleRequest) return;
+      rolePermissions =
+        (response.data?.permissions?.entities as Record<
+          string,
+          PermissionFlags
+        >) ?? {};
+    } catch (error) {
+      console.error("Failed to load role permissions:", error);
+      rolePermissions = {};
+    } finally {
+      if (request === roleRequest) roleLoading = false;
+    }
+  }
+
+  function setEntitiesPage(page: number) {
+    entitiesPage = page;
+    appState.rememberTablePage("admin-permissions", page);
+    void loadEntities(page);
+  }
+
+  function togglePermission(
+    entityName: string,
+    key: keyof PermissionFlags,
+    checked: boolean,
+  ) {
+    rolePermissions = {
+      ...rolePermissions,
+      [entityName]: {
+        ...(rolePermissions[entityName] ?? {}),
+        [key]: checked,
+      },
+    };
   }
 
   async function savePermissions() {
     if (!selectedRole) return;
     saving = true;
     try {
-      await apiJSON(`/api/admin/roles/${selectedRole.id}/permissions`, {
+      await apiJSON(`/api/admin/permissions/role/${selectedRole.id}`, {
         method: "PUT",
         body: JSON.stringify({
-          permission_ids: Array.from(rolePermissionIds),
+          permissions: { entities: rolePermissions },
         }),
       });
       toast.success("Permissions updated");
-      await loadData();
+      await loadRolePermissions(selectedRole.id);
     } catch (error) {
       console.error("Failed to save permissions:", error);
       toast.error("Failed to save permissions");
@@ -98,92 +153,123 @@
     }
   }
 
+  $effect(() => {
+    if (selectedRoleId) void loadRolePermissions(selectedRoleId);
+  });
+
   onMount(() => {
-    loadData();
+    void loadRoles();
+    void loadEntities(entitiesPage);
   });
 </script>
 
 <div class="flex flex-col gap-6">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-wrap items-end justify-between gap-4">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Permissions</h1>
-      <p class="text-sm text-base-content/60">
+      <p class="mt-1 text-sm text-base-content/60">
         Manage role-based access control
       </p>
     </div>
-    <Button onclick={savePermissions} disabled={saving || !selectedRole}>
+    <Button
+      onclick={savePermissions}
+      disabled={saving || !selectedRole || roleLoading}
+    >
       {saving ? "Saving..." : "Save Changes"}
     </Button>
   </div>
 
-  {#if loading}
-    <div class="flex items-center justify-center py-12">
-      <Spinner class="size-8" />
+  <div class="flex flex-col gap-4">
+    <div class="flex items-center gap-3">
+      <span class="text-sm font-medium">Role:</span>
+      <Select.Root
+        type="single"
+        value={selectedRoleId}
+        onValueChange={(value) => (selectedRoleId = value ?? "")}
+      >
+        <Select.Trigger class="w-48">
+          {selectedRole?.name ?? "Select role..."}
+        </Select.Trigger>
+        <Select.Content>
+          {#each roles as role (role.id)}
+            <Select.Item value={role.id} label={role.name}>
+              {role.name}
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+      {#if roleLoading}
+        <Spinner class="size-4" />
+      {/if}
     </div>
-  {:else}
-    <div class="flex flex-col gap-4">
-      <div class="flex items-center gap-3">
-        <span class="text-sm font-medium">Role:</span>
-        <Select.Root
-          type="single"
-          value={selectedRoleId}
-          onValueChange={(v) => (selectedRoleId = v ?? "")}
-        >
-          <Select.Trigger class="w-48">
-            {selectedRole?.name ?? "Select role..."}
-          </Select.Trigger>
-          <Select.Content>
-            {#each roles as role (role.id)}
-              <Select.Item value={role.id} label={role.name}>
-                {role.name}
-              </Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </div>
 
-      <div class="border rounded-xl">
-        {#if permissions.length > 0}
-          <Table.Root>
-            <Table.Header>
-              <Table.Row>
-                <Table.Head class="w-12"></Table.Head>
-                <Table.Head>Permission</Table.Head>
-                <Table.Head>Description</Table.Head>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {#each permissions as perm (perm.id)}
-                <Table.Row>
-                  <Table.Cell>
-                    <Checkbox
-                      checked={rolePermissionIds.has(perm.id)}
-                      onCheckedChange={(v) =>
-                        togglePermission(perm.id, v === true)}
-                    />
-                  </Table.Cell>
-                  <Table.Cell class="font-mono text-sm">{perm.name}</Table.Cell>
-                  <Table.Cell class="text-sm text-base-content/60"
-                    >{perm.description}</Table.Cell
-                  >
-                </Table.Row>
+    <div class="overflow-hidden rounded-box border border-base-300 bg-base-100">
+      {#if loading && !entities.length}
+        <div class="flex items-center justify-center py-12">
+          <Spinner class="size-8" />
+        </div>
+      {:else if entities.length}
+        <div class="overflow-x-auto">
+          <table class="table table-zebra">
+            <thead>
+              <tr>
+                <th>Entity</th>
+                <th>Module</th>
+                {#each permissionColumns as [, label] (label)}
+                  <th class="text-center">{label}</th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody>
+              {#each entities as entity (entity.name)}
+                <tr>
+                  <td>
+                    <div class="font-medium">{entity.label}</div>
+                    <div class="font-mono text-xs text-base-content/60">
+                      {entity.name}
+                    </div>
+                  </td>
+                  <td class="capitalize">{entity.module}</td>
+                  {#each permissionColumns as [key] (`${entity.name}-${key}`)}
+                    <td class="text-center">
+                      <Checkbox
+                        checked={Boolean(rolePermissions[entity.name]?.[key])}
+                        disabled={roleLoading || saving}
+                        onCheckedChange={(value) =>
+                          togglePermission(entity.name, key, value === true)}
+                      />
+                    </td>
+                  {/each}
+                </tr>
               {/each}
-            </Table.Body>
-          </Table.Root>
-        {:else}
-          <Empty.Root class="py-16">
-            <Empty.Media variant="icon">
-              <ShieldIcon />
-            </Empty.Media>
-            <Empty.Header>
-              <Empty.Title>No permissions defined</Empty.Title>
-              <Empty.Description>
-                Permissions will appear here once defined in the backend.
-              </Empty.Description>
-            </Empty.Header>
-          </Empty.Root>
-        {/if}
-      </div>
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          page={entitiesPage}
+          pageSize={entitiesPageSize}
+          total={entitiesTotal}
+          {loading}
+          pageSizeOptions={[10, 25, 50, 100]}
+          onchange={setEntitiesPage}
+          onpagesizechange={(size) => {
+            entitiesPageSize = size;
+            setEntitiesPage(1);
+          }}
+        />
+      {:else}
+        <Empty.Root class="py-16">
+          <Empty.Media variant="icon">
+            <ShieldIcon />
+          </Empty.Media>
+          <Empty.Header>
+            <Empty.Title>No entities defined</Empty.Title>
+            <Empty.Description>
+              Permissions will appear here once entities are registered.
+            </Empty.Description>
+          </Empty.Header>
+        </Empty.Root>
+      {/if}
     </div>
-  {/if}
+  </div>
 </div>

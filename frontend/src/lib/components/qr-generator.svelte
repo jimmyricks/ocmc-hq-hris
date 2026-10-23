@@ -5,12 +5,13 @@
   import * as Tabs from "$lib/components/ui/tabs/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
   import * as Field from "$lib/components/ui/field/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
   import { Input } from "$lib/components/ui/input";
   import { Textarea } from "$lib/components/ui/textarea";
   import { Button } from "$lib/components/ui/button";
   import * as Select from "$lib/components/ui/select/index.js";
-  import { apiFetch, apiJSON } from "$lib/api/index.js";
+  import { apiFetch, apiJSON, toPaginatedResult } from "$lib/api/index.js";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
 
   let sourceType = $state("url");
   let sourceValue = $state("");
@@ -23,7 +24,11 @@
 
   let dataUrl = $state<string | null>(null);
   let recordId = $state<string | null>(null);
+  const appState = useAppState();
   let history = $state<any[]>([]);
+  let historyPage = $state(appState.tablePage("qr-history"));
+  let historyPageSize = $state(20);
+  let historyTotal = $state(0);
   let shortLinks = $state<any[]>([]);
   let loading = $state(true);
   let generating = $state(false);
@@ -41,19 +46,40 @@
     return `data:${contentType};base64,${btoa(binary)}`;
   }
 
-  async function loadHistory() {
+  async function loadHistory(targetPage = historyPage) {
+    loading = true;
     try {
       const [qrRes, linksRes] = await Promise.all([
-        apiJSON("/api/utils/qr"),
-        apiJSON("/api/utils/links?status=active"),
+        apiJSON(
+          `/api/utils/qr?page=${targetPage}&page_size=${historyPageSize}`,
+        ),
+        apiJSON("/api/utils/links?status=active&page=1&page_size=100"),
       ]);
-      history = qrRes.data?.data ?? [];
+      const result = toPaginatedResult<any>(
+        qrRes,
+        targetPage,
+        historyPageSize,
+        ["data", "items"],
+      );
+      if (!result.items.length && result.total > 0 && targetPage > 1) {
+        return loadHistory(Math.ceil(result.total / historyPageSize));
+      }
+      history = result.items;
+      historyTotal = result.total;
+      historyPage = result.page;
+      appState.rememberTablePage("qr-history", historyPage);
       shortLinks = linksRes.data?.data ?? [];
     } catch (e: any) {
       toast.error(e.message || "Failed to load history");
     } finally {
       loading = false;
     }
+  }
+
+  function setHistoryPage(targetPage: number) {
+    historyPage = targetPage;
+    appState.rememberTablePage("qr-history", targetPage);
+    void loadHistory(targetPage);
   }
 
   function sanitizeSvg(svg: string) {
@@ -93,7 +119,7 @@
         dataUrl = raw;
       }
       toast.success("QR code generated");
-      await loadHistory();
+      setHistoryPage(1);
     } catch (e: any) {
       toast.error(e.message || "Failed to generate QR");
     } finally {
@@ -280,26 +306,26 @@
       {:else if history.length === 0}
         <p class="text-base-content/60">No QR codes yet.</p>
       {:else}
-        <Table.Root>
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Type</Table.Head>
-              <Table.Head>Source</Table.Head>
-              <Table.Head>Format</Table.Head>
-              <Table.Head>Size</Table.Head>
-              <Table.Head class="w-[180px]">Actions</Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
+        <table class="table table-zebra">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Source</th>
+              <th>Format</th>
+              <th>Size</th>
+              <th class="w-[180px]">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
             {#each history as item (item.id)}
-              <Table.Row>
-                <Table.Cell>{item.source_type}</Table.Cell>
-                <Table.Cell class="max-w-[200px] truncate"
-                  >{item.source_value}</Table.Cell
+              <tr>
+                <td>{item.source_type}</td>
+                <td class="max-w-[200px] truncate"
+                  >{item.source_value}</td
                 >
-                <Table.Cell>{item.format}</Table.Cell>
-                <Table.Cell>{item.size}</Table.Cell>
-                <Table.Cell>
+                <td>{item.format}</td>
+                <td>{item.size}</td>
+                <td>
                   <div class="flex gap-1">
                     <Button
                       variant="outline"
@@ -313,11 +339,23 @@
                       >Download</Button
                     >
                   </div>
-                </Table.Cell>
-              </Table.Row>
+                </td>
+              </tr>
             {/each}
-          </Table.Body>
-        </Table.Root>
+          </tbody>
+        </table>
+        <Pagination
+          page={historyPage}
+          pageSize={historyPageSize}
+          total={historyTotal}
+          {loading}
+          pageSizeOptions={[10, 20, 50, 100]}
+          onchange={setHistoryPage}
+          onpagesizechange={(size) => {
+            historyPageSize = size;
+            setHistoryPage(1);
+          }}
+        />
       {/if}
     </Card.Content>
   </Card.Root>

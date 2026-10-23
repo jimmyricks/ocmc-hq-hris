@@ -16,9 +16,11 @@ class WorkflowAppService:
         self.workflow_repo = workflow_repo
         self.entity_repo = entity_repo
 
-    async def get_workflow_meta(self, entity: str) -> Optional[dict]:
+    async def get_workflow_meta(
+        self, entity: str, workspace_id: Optional[str] = None
+    ) -> Optional[dict]:
         """Get workflow metadata for frontend."""
-        workflow = await self.workflow_repo.get_workflow(entity)
+        workflow = await self.workflow_repo.get_workflow(entity, workspace_id)
         if not workflow:
             return None
 
@@ -50,13 +52,22 @@ class WorkflowAppService:
             "states": states_dict,
         }
 
-    async def get_initial_state(self, entity: str) -> Optional[str]:
-        return await self.workflow_repo.get_initial_state(entity)
+    async def get_initial_state(
+        self, entity: str, workspace_id: Optional[str] = None
+    ) -> Optional[str]:
+        return await self.workflow_repo.get_initial_state(entity, workspace_id)
 
     async def get_available_actions(
-        self, entity: str, current_state: str, user: Any = None, record_id: str = None
+        self,
+        entity: str,
+        current_state: str,
+        user: Any = None,
+        record_id: str = None,
+        workspace_id: Optional[str] = None,
     ) -> list[dict]:
-        return await self.workflow_repo.get_available_actions(entity, current_state, user, record_id)
+        return await self.workflow_repo.get_available_actions(
+            entity, current_state, user, record_id, workspace_id=workspace_id
+        )
 
     async def validate_and_transition(
         self,
@@ -65,8 +76,14 @@ class WorkflowAppService:
         action: str,
         current_state: str,
         user: Any = None,
+        workspace_id: Optional[str] = None,
     ) -> tuple[bool, Optional[str], Optional[str]]:
         """Validate transition. Returns (is_valid, target_state, error)."""
         return await self.workflow_repo.validate_transition(
-            entity, current_state, action, user, record_id
+            entity,
+            current_state,
+            action,
+            user,
+            record_id,
+            workspace_id=workspace_id,
         )

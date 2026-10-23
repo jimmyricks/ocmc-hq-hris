@@ -1,5 +1,5 @@
 from typing import Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ActionRequest(BaseModel):
@@ -18,7 +18,14 @@ class ActionResponse(BaseModel):
 
 class WorkflowRequest(BaseModel):
     action: str  # workflow action name
-    id: str
+    id: Optional[str] = None
+    record_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_record_identifier(self):
+        if not self.id and not self.record_id:
+            raise ValueError("id or record_id is required")
+        return self
 
 
 class ListResponse(BaseModel):

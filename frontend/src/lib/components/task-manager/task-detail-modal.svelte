@@ -3,6 +3,7 @@
   import { toast } from "$lib/notifications";
   import { taskApi } from "$lib/task-manager/api.js";
   import { refCache } from "$lib/task-manager/ref-cache.js";
+  import { userApi } from "$lib/users/api.js";
   import type {
     ApprovalDecision,
     Comment,
@@ -11,38 +12,35 @@
     Task,
     TaskAssignment,
     TaskSubmission,
+    TaskSummary,
     TaskType,
     TaskCategory,
     User,
+    WorkflowProgress,
+    WorkflowTransition,
   } from "$lib/task-manager/types.js";
-  import { getUser, isProjectManager, type User as AuthUser } from "$lib/auth";
-  import { workspaceApi } from "$lib/workspaces/api";
-  import type { WorkspaceContext } from "$lib/workspaces/types";
+  import { isProjectManager } from "$lib/auth";
+  import { useAppState } from "$lib/app-state.svelte.js";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
   import {
     PRIORITY_META,
-    STATUS_META,
     stateBadge,
     formatDueDate,
-    timeAgo,
     taskState,
   } from "$lib/task-manager/utils.js";
 
-  import * as Card from "$lib/components/ui/card/index.js";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Field from "$lib/components/ui/field/index.js";
-  import * as InputGroup from "$lib/components/ui/input-group/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import UserCombobox from "$lib/components/user-combobox.svelte";
+  import SubmitWorkDialog from "$lib/components/task-manager/submit-work-dialog.svelte";
+  import TaskCommentsTab from "$lib/components/task-manager/task-comments-tab.svelte";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
-  import { Avatar, AvatarFallback } from "$lib/components/ui/avatar/index.js";
-  import * as Empty from "$lib/components/ui/empty/index.js";
-  import * as Item from "$lib/components/ui/item/index.js";
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { cn } from "$lib/utils.js";
 
@@ -57,9 +55,7 @@
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import ClipboardListIcon from "@lucide/svelte/icons/clipboard-list";
   import SaveIcon from "@lucide/svelte/icons/save";
-  import PlusIcon from "@lucide/svelte/icons/plus";
-  import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
-  import PencilIcon from "@lucide/svelte/icons/pencil";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
 
   interface Props {
     open?: boolean;
@@ -85,14 +81,16 @@
     projects = [],
     taskTypes: taskTypesProp = [],
     taskCategories: taskCategoriesProp = [],
+    members: membersProp = [],
     users: usersProp = [],
     onTaskUpdated,
     onTaskCreated,
     onTaskDeleted,
   }: Props = $props();
 
-  let currentUser = $state<AuthUser | null>(null);
-  let workspaceContext = $state<WorkspaceContext | null>(null);
+  const appState = useAppState();
+  const currentUser = $derived(appState.user);
+  const workspaceContext = $derived(appState.workspaceContext);
   let task = $state<Task | null>(null);
   let project = $state<Project | null>(null);
   let taskTypes = $state<TaskType[]>([]);
@@ -100,15 +98,18 @@
   let assignments = $state<TaskAssignment[]>([]);
   let submissions = $state<TaskSubmission[]>([]);
   let comments = $state<Comment[]>([]);
+  let members = $state<ProjectMember[]>([]);
   let users = $state<User[]>([]);
+  let workflowProgress = $state<WorkflowProgress | null>(null);
+  let workflowActions = $state<WorkflowTransition[]>([]);
+  let deliverable = $state<TaskSummary | null>(null);
   let loading = $state(true);
   let error = $state("");
   let activeTab = $state("details");
 
   // Create mode
   let isNew = $derived(!!newTask);
-  let assigneeId = $state<string>("");
-  let assigning = $state(false);
+  let selectedAssigneeId = $state<string>("");
   let deleteConfirm = $state(false);
 
   // Editable draft of the task
@@ -117,7 +118,7 @@
     project_id: "",
     task_type_id: "",
     title: "",
-    status: "pending",
+    status: "draft",
     priority: "medium",
   };
   let draft = $state<Task>({ ...emptyTask });
@@ -127,6 +128,7 @@
   // Submit-work dialog
   let submitOpen = $state(false);
   let externalLink = $state("");
+  let content = $state("");
   let notes = $state("");
   let submitting = $state(false);
 
@@ -136,15 +138,17 @@
   let reviewRemarks = $state("");
   let reviewing = $state(false);
   let reviewSubmission = $state<TaskSubmission | null>(null);
-
-  // Comment composer
-  let commentBody = $state("");
-  let commentSending = $state(false);
-  let editingCommentId = $state<string | null>(null);
-  let editBody = $state("");
+  let transitionBusy = $state(false);
 
   let isPM = $derived(
     isProjectManager(currentUser) ||
+      project?.manager_id === currentUser?.id ||
+      members.some(
+        (member) =>
+          member.user_id === currentUser?.id &&
+          member.role === "manager" &&
+          member.is_active !== false,
+      ) ||
       Boolean(
         workspaceContext?.can_manage &&
           (workspaceContext.is_global ||
@@ -158,19 +162,50 @@
   );
   let isAssignee = $derived(!!myAssignment);
 
-  // The assign endpoint accepts active members of the task's workspace.
-  // The workspace directory is already scoped server-side.
-  let assignableUsers = $derived(users);
-
   let stateValue = $derived(task ? taskState(task) : null);
-  let badge = $derived(
-    task
-      ? stateBadge({ workflow_state: task.workflow_state, status: task.status })
-      : null,
+  let badge = $derived.by(() => {
+    if (!task) return null;
+    const meta = stateBadge({
+      workflow_state: task.workflow_state,
+      status: task.status,
+    });
+    return {
+      ...meta,
+      label: workflowProgress?.node?.current_state_label ?? meta.label,
+    };
+  });
+  let isForReview = $derived(
+    stateValue === "for_review" ||
+      stateValue === "for_approval" ||
+      stateValue === "submitted",
   );
-  let isForReview = $derived(stateValue === "for_review");
-  let isClosed = $derived(stateValue === "closed");
+  let isClosed = $derived(
+    stateValue === "closed" ||
+      stateValue === "done" ||
+      stateValue === "cancelled",
+  );
   let fieldsLocked = $derived(isForReview || isClosed);
+  let taskTypeLocked = $derived(isClosed || stateValue === "approved");
+  let submissionMode = $derived(
+    taskTypes.find((tt) => tt.id === (draft.task_type_id || task?.task_type_id))
+      ?.submission_mode ??
+      deliverable?.submission_mode ??
+      "link",
+  );
+  let submittedLinks = $derived(
+    submissions
+      .filter((submission) => Boolean(submission.external_link?.trim()))
+      .sort(
+        (a, b) =>
+          Date.parse(b.submitted_at ?? b.created_at ?? "") -
+          Date.parse(a.submitted_at ?? a.created_at ?? ""),
+      ),
+  );
+  let reviewableSubmission = $derived(
+    submissions.find(
+      (s) => s.status === "submitted" || s.status === "under_review",
+    ),
+  );
 
   const decisionLabel: Record<ApprovalDecision, string> = {
     approved: "Approve",
@@ -189,21 +224,17 @@
   // Reset + load when taskId or newTask changes
   $effect(() => {
     if (!browser || !open) return;
-    currentUser = getUser();
-    workspaceApi
-      .getContext()
-      .then((context) => (workspaceContext = context))
-      .catch(() => (workspaceContext = null));
     activeTab = "details";
     deleteConfirm = false;
     if (newTask) {
       // Create mode — use props for types/categories/users, no API load
       task = null;
       draft = { ...newTask };
-      assigneeId = "";
+      selectedAssigneeId = "";
       taskTypes = taskTypesProp;
       taskCategories = taskCategoriesProp;
       users = usersProp;
+      members = membersProp;
       assignments = [];
       submissions = [];
       comments = [];
@@ -214,6 +245,14 @@
       load();
     }
   });
+
+  function mergeUsers(...lists: User[][]): User[] {
+    const merged = new Map<string, User>();
+    for (const list of lists) {
+      for (const user of list) merged.set(user.id, user);
+    }
+    return [...merged.values()];
+  }
 
   async function load() {
     if (!taskId) return;
@@ -230,15 +269,18 @@
       // Only fetch task-specific data (assignments, submissions, comments).
       // Reference data (users, task_types, task_categories) comes from props
       // or the shared ref-cache — no redundant API calls.
-      const [a, subs, cmts, usrs, types, cats] = await Promise.all([
+      const [a, subs, cmts, prog, del, types, cats] = await Promise.all([
         taskApi.getTaskAssignments(taskId).catch(() => [] as TaskAssignment[]),
         taskApi
           .getSubmissionsForTask(taskId)
           .catch(() => [] as TaskSubmission[]),
         taskApi.getComments(taskId).catch(() => [] as Comment[]),
-        usersProp.length > 0
-          ? Promise.resolve(usersProp)
-          : refCache.getUsers().catch(() => [] as User[]),
+        taskApi
+          .getWorkflowProgress("task", taskId)
+          .catch(() => null as WorkflowProgress | null),
+        taskApi
+          .getTaskDeliverable(taskId)
+          .catch(() => null as TaskSummary | null),
         taskTypesProp.length > 0
           ? Promise.resolve(taskTypesProp)
           : refCache.getTaskTypes().catch(() => [] as TaskType[]),
@@ -247,12 +289,34 @@
           : refCache.getTaskCategories().catch(() => [] as TaskCategory[]),
       ]);
       assignments = a ?? [];
+      selectedAssigneeId =
+        assignments.find((assignment) => assignment.is_active !== false)
+          ?.user_id ?? "";
       submissions = subs ?? [];
       comments = cmts ?? [];
-      users = usrs ?? [];
+      deliverable = del ?? null;
+      users = mergeUsers(
+        usersProp,
+        currentUser ? [{ ...currentUser, is_active: true }] : [],
+      );
       taskTypes = types ?? [];
       taskCategories = cats ?? [];
+      workflowProgress = prog;
+      workflowActions =
+        prog?.node?.next_actions ??
+        prog?.available_transitions ??
+        (await taskApi
+          .getAvailableWorkflowTransitions("task", taskState(t), taskId)
+          .catch(() => [] as WorkflowTransition[]));
       project = projects.find((p) => p.id === t.project_id) ?? null;
+      if (project?.id) {
+        const projectMembers = membersProp.length
+          ? membersProp
+          : await taskApi
+              .getProjectMembers(project.id)
+              .catch(() => [] as ProjectMember[]);
+        members = projectMembers;
+      }
       dueDateInput = t.due_date ? t.due_date.split("T")[0] : "";
     } catch (err: any) {
       error = err.message || "Failed to load task";
@@ -264,6 +328,16 @@
   function userName(id: string): string {
     const u = users.find((x) => x.id === id);
     return u ? u.full_name || u.email : id;
+  }
+
+  function searchAssignableUsers(search: string) {
+    const projectId = draft.project_id || project?.id;
+    if (!projectId) return Promise.resolve([]);
+    return userApi.lookup({ search, projectId, pageSize: 5 });
+  }
+
+  function selectAssignee(user: User) {
+    users = mergeUsers(users, [user]);
   }
 
   function userInitials(id: string): string {
@@ -295,16 +369,20 @@
           due_date: draft.due_date,
           description: draft.description,
         });
-        if (assigneeId) {
-          await taskApi.assignTask(created.id, assigneeId);
+        if (selectedAssigneeId) {
+          await taskApi.assignTask(created.id, selectedAssigneeId);
         }
         toast.success("Task created");
         onTaskCreated?.(created);
         open = false;
       } else if (task) {
-        const updated = await taskApi.updateTask(draft);
-        task = updated;
-        draft = { ...updated };
+        await taskApi.updateTask(draft);
+        if (selectedAssigneeId && selectedAssigneeId !== activeAssigneeId) {
+          await taskApi.assignTask(task.id, selectedAssigneeId);
+        }
+        // Reload assignments, submissions, and workflow state — assignment
+        // side-effects can change the task status.
+        await load();
         toast.success("Task saved");
         onTaskUpdated?.();
       }
@@ -312,23 +390,6 @@
       toast.error(err.message || "Failed to save task");
     } finally {
       saving = false;
-    }
-  }
-
-  async function changeAssignee(userId: string) {
-    if (!task || assigning || !userId || userId === activeAssigneeId) return;
-    assigning = true;
-    try {
-      await taskApi.assignTask(task.id, userId);
-      assignments = await taskApi
-        .getTaskAssignments(task.id)
-        .catch(() => assignments);
-      toast.success("Task reassigned");
-      onTaskUpdated?.();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to reassign task");
-    } finally {
-      assigning = false;
     }
   }
 
@@ -349,38 +410,58 @@
   }
 
   // --- Workflow actions ---
-  async function startTask() {
-    if (!task) return;
-    try {
-      await taskApi.executeWorkflowTransition("task", {
-        record_id: task.id,
-        action: "start",
-      });
-      toast.success("Task started");
-      await load();
-      onTaskUpdated?.();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to start task");
-    }
+  const submissionActions = new Set([
+    "submit",
+    "submit_for_review",
+    "submit_for_approval",
+  ]);
+  const reviewActionDecisions: Record<string, ApprovalDecision> = {
+    approve: "approved",
+    request_changes: "needs_revision",
+    revise: "needs_revision",
+    reject: "rejected",
+  };
+
+  function transitionDisabled(transition: WorkflowTransition): boolean {
+    const action = transition.action_slug;
+    if (submissionActions.has(action)) return !myAssignment;
+    if (action in reviewActionDecisions) return !reviewableSubmission;
+    return false;
   }
 
-  async function closeTask() {
-    if (!task) return;
+  async function handleWorkflowAction(transition: WorkflowTransition) {
+    if (!task || transitionDisabled(transition)) return;
+    const action = transition.action_slug;
+    if (submissionActions.has(action)) {
+      openSubmit();
+      return;
+    }
+    if (action in reviewActionDecisions && reviewableSubmission) {
+      openReview(reviewableSubmission, reviewActionDecisions[action]);
+      return;
+    }
+
+    transitionBusy = true;
     try {
       await taskApi.executeWorkflowTransition("task", {
         record_id: task.id,
-        action: "close",
+        action,
       });
-      toast.success("Task closed");
+      toast.success(transition.action_label || "Status updated");
       await load();
       onTaskUpdated?.();
     } catch (err: any) {
-      toast.error(err.message || "Failed to close task");
+      toast.error(err.message || "Failed to update task status");
+    } finally {
+      transitionBusy = false;
     }
   }
 
   function openSubmit() {
-    externalLink = "";
+    // Revisions keep the current deliverable link; assignees change it only
+    // when they intend to replace the task's link.
+    externalLink = deliverable?.deliverable_url ?? "";
+    content = "";
     notes = "";
     submitOpen = true;
   }
@@ -395,7 +476,9 @@
       await taskApi.submitWork({
         task_assignment_id: myAssignment.id,
         notes: notes || undefined,
-        external_link: externalLink || undefined,
+        external_link:
+          submissionMode === "text" ? undefined : externalLink || undefined,
+        content: submissionMode === "text" ? content || undefined : undefined,
         previous_submission_id: latestRevision?.id,
       });
       submitOpen = false;
@@ -409,9 +492,12 @@
     }
   }
 
-  function openReview(submission: TaskSubmission) {
+  function openReview(
+    submission: TaskSubmission,
+    decision: ApprovalDecision = "approved",
+  ) {
     reviewSubmission = submission;
-    reviewDecision = "approved";
+    reviewDecision = decision;
     reviewRemarks = "";
     reviewOpen = true;
   }
@@ -440,77 +526,6 @@
     }
   }
 
-  // --- Comments ---
-  async function sendComment() {
-    if (!commentBody.trim() || !taskId) return;
-    commentSending = true;
-    try {
-      const created = await taskApi.addComment(taskId, commentBody.trim());
-      comments = [...comments, created];
-      commentBody = "";
-    } catch (err: any) {
-      toast.error(err.message || "Failed to add comment");
-    } finally {
-      commentSending = false;
-    }
-  }
-
-  async function deleteComment(commentId: string) {
-    if (!taskId) return;
-    try {
-      await taskApi.deleteComment(taskId, commentId);
-      comments = comments.filter((c) => c.id !== commentId);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to delete comment");
-    }
-  }
-
-  function startEditComment(commentId: string, body: string) {
-    editingCommentId = commentId;
-    editBody = body;
-  }
-
-  function cancelEditComment() {
-    editingCommentId = null;
-    editBody = "";
-  }
-
-  async function saveEditComment(commentId: string) {
-    if (!taskId || !editBody.trim()) return;
-    try {
-      const updated = await taskApi.updateComment(
-        taskId,
-        commentId,
-        editBody.trim(),
-      );
-      comments = comments.map((c) => (c.id === commentId ? updated : c));
-      editingCommentId = null;
-      editBody = "";
-    } catch (err: any) {
-      toast.error(err.message || "Failed to edit comment");
-    }
-  }
-
-  // --- Links ---
-  let newLinkUrl = $state("");
-
-  function addLink(url: string) {
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    if (!draft.links) {
-      draft.links = [];
-    }
-    draft.links = [
-      ...draft.links,
-      {
-        id: crypto.randomUUID(),
-        task_id: draft.id,
-        url: trimmed,
-      },
-    ];
-    newLinkUrl = "";
-  }
-
   const componentId = $props.id();
   const drawerToggleId = `task-detail-drawer-${componentId}`;
 
@@ -518,26 +533,11 @@
     if (event.key === "Escape" && presentation === "drawer" && open)
       open = false;
   }
-
-  function removeLink(id: string) {
-    if (!draft.links) return;
-    draft.links = draft.links.filter((l) => l.id !== id);
-  }
 </script>
 
 <svelte:window onkeydown={handleDrawerKeydown} />
 
 {#snippet detailBody()}
-  <Button
-    variant="ghost"
-    size="sm"
-    icon
-    class="absolute right-2 top-2 z-10 rounded-full"
-    aria-label="Close task details"
-    onclick={() => (open = false)}
-  >
-    <XIcon />
-  </Button>
   {#if loading}
     <Dialog.Header>
       <Dialog.Title>Loading task...</Dialog.Title>
@@ -553,82 +553,94 @@
     </Dialog.Header>
   {:else if task || isNew}
     <Tabs.Root bind:value={activeTab}>
-      <Dialog.Header>
-        <div class="flex flex-col justify-between">
+      <Dialog.Header class="mb-0!">
+        <div>
           {#if isNew}
             <Dialog.Title>New Task</Dialog.Title>
             <Dialog.Description
               >Create a new task and assign it to a project member.</Dialog.Description
             >
           {:else}
-            <div class="flex items-center gap-2">
-              {#if task!.task_key}
-                <span class="font-mono text-sm text-base-content/60"
-                  >{task!.task_key}</span
-                >
-              {/if}
-              {#if fieldsLocked}
-                <Badge variant="secondary" class="gap-1">
-                  <LockIcon class="size-3" />
-                  Locked for review
-                </Badge>
-              {/if}
-            </div>
-            <Dialog.Title class="text-xl">{task!.title}</Dialog.Title>
-            {#if project}
-              <Dialog.Description
-                class="flex items-center gap-2 mt-2 justify-between"
-              >
-                <DropdownMenu.DropdownMenu>
-                  <DropdownMenu.DropdownMenuTrigger>
-                    <Button
-                      variant="outline"
-                      size="md"
-                      class="gap-2 px-3 font-medium"
-                    >
-                      <span
-                        class="size-2 rounded-full"
-                        style:background-color={badge?.color ||
-                          "var(--color-base-content)"}
-                      ></span>
-                      {badge?.label}
-                    </Button>
-                  </DropdownMenu.DropdownMenuTrigger>
-                  <DropdownMenu.DropdownMenuContent class="w-48">
-                    {#if isAssignee && stateValue === "draft_assigned"}
-                      <DropdownMenu.DropdownMenuItem onclick={startTask}>
-                        <PlayIcon class="size-4" />
-                        Start
-                      </DropdownMenu.DropdownMenuItem>
-                    {/if}
-                    {#if isAssignee && (stateValue === "in_progress" || stateValue === "needs_revision")}
-                      <DropdownMenu.DropdownMenuItem onclick={openSubmit}>
-                        <SendIcon class="size-4" />
-                        Submit Work
-                      </DropdownMenu.DropdownMenuItem>
-                    {/if}
-                    {#if isPM && stateValue === "approved"}
-                      <DropdownMenu.DropdownMenuItem onclick={closeTask}>
-                        <LockIcon class="size-4" />
-                        Close Task
-                      </DropdownMenu.DropdownMenuItem>
-                    {/if}
-                  </DropdownMenu.DropdownMenuContent>
-                </DropdownMenu.DropdownMenu>
-                <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2.5">
+              <Dialog.Title class="flex min-w-0 flex-1 items-center gap-2">
+                {#if project}
                   <span
-                    class="size-2 rounded-full"
+                    class="size-2 shrink-0 rounded-full"
                     style:background-color={project.color ??
                       "var(--color-base-content)"}
                   ></span>
-                  {project.name}
-                </div>
-              </Dialog.Description>
-            {/if}
+                  <span class="truncate">{project.name}</span>
+                {:else}
+                  Task
+                {/if}
+              </Dialog.Title>
+              {#if fieldsLocked || taskTypeLocked}
+                <Badge variant="secondary" class="gap-1" size="xl">
+                  <LockIcon class="size-3" />
+                  {isForReview ? "Locked for review" : ""}
+                </Badge>
+              {/if}
+
+              {#if task!.task_key}
+                <span class="shrink-0 font-mono text-sm text-base-content/60"
+                  >{task!.task_key}</span
+                >
+              {/if}
+              <DropdownMenu.DropdownMenu>
+                <DropdownMenu.DropdownMenuTrigger
+                  class="btn btn-outline border-base-300 btn-sm gap-2 px-3 font-medium"
+                  role="button"
+                >
+                  <span
+                    class="size-2 rounded-full"
+                    style:background-color={badge?.color ||
+                      "var(--color-base-content)"}
+                  ></span>
+                  {badge?.label}
+                  <ChevronDownIcon class="size-4 opacity-60" />
+                </DropdownMenu.DropdownMenuTrigger>
+                <DropdownMenu.DropdownMenuContent class="w-56" align="end">
+                  {#if workflowActions.length === 0}
+                    <DropdownMenu.DropdownMenuItem disabled>
+                      No actions available
+                    </DropdownMenu.DropdownMenuItem>
+                  {:else}
+                    {#each workflowActions as transition}
+                      <DropdownMenu.DropdownMenuItem
+                        disabled={transitionBusy ||
+                          transitionDisabled(transition)}
+                        onclick={() => handleWorkflowAction(transition)}
+                      >
+                        {#if submissionActions.has(transition.action_slug)}
+                          <SendIcon class="size-4" />
+                        {:else if transition.action_slug === "approve"}
+                          <CheckIcon class="size-4" />
+                        {:else if transition.action_slug === "reject"}
+                          <XIcon class="size-4" />
+                        {:else if transition.action_slug === "request_changes" || transition.action_slug === "revise"}
+                          <RefreshCwIcon class="size-4" />
+                        {:else if transition.to_state === "done" || transition.to_state === "closed"}
+                          <LockIcon class="size-4" />
+                        {:else}
+                          <PlayIcon class="size-4" />
+                        {/if}
+                        <span>{transition.action_label}</span>
+                        {#if transition.to_state_label}
+                          <span class="ml-auto text-xs text-base-content/50">
+                            → {transition.to_state_label}
+                          </span>
+                        {/if}
+                      </DropdownMenu.DropdownMenuItem>
+                    {/each}
+                  {/if}
+                </DropdownMenu.DropdownMenuContent>
+              </DropdownMenu.DropdownMenu>
+            </div>
           {/if}
         </div>
 
         <Tabs.List
+          size="sm"
           class={cn(
             "mt-2 w-full",
             isNew ? "grid grid-cols-1" : "grid grid-cols-2 sm:flex",
@@ -653,7 +665,7 @@
       </Dialog.Header>
 
       <!-- DETAILS TAB -->
-      <Tabs.Content value="details" class="space-y-6 pt-2">
+      <Tabs.Content value="details" class="space-y-2">
         {#if task || isNew}
           <Field.FieldGroup class="gap-4">
             <!-- Title -->
@@ -688,7 +700,7 @@
                 <Select.Root
                   type="single"
                   value={draft.task_type_id}
-                  disabled={fieldsLocked || taskTypes.length === 0}
+                  disabled={taskTypeLocked || taskTypes.length === 0}
                   onValueChange={(v) => {
                     draft.task_type_id = v;
                   }}
@@ -774,262 +786,103 @@
               <Field.Field class="gap-1">
                 <Field.Label for="task-assignee">Assigned To</Field.Label>
                 {#if isNew}
-                  <Select.Root
-                    type="single"
-                    value={assigneeId}
-                    onValueChange={(v) => (assigneeId = v)}
-                  >
-                    <Select.Trigger id="task-assignee" size="md" class="w-full">
-                      <span class="truncate">
-                        {assigneeId ? userName(assigneeId) : "Select member..."}
-                      </span>
-                    </Select.Trigger>
-                    <Select.Content class="p-1">
-                      {#each assignableUsers as user (user.id)}
-                        <Select.Item value={user.id} label={user.full_name}>
-                          {user.full_name}
-                        </Select.Item>
-                      {:else}
-                        <div class="px-2 py-1.5 text-xs text-base-content/60">
-                          No workspace members available.
-                        </div>
-                      {/each}
-                    </Select.Content>
-                  </Select.Root>
+                  <UserCombobox
+                    id="task-assignee"
+                    bind:value={selectedAssigneeId}
+                    selectedLabel={selectedAssigneeId
+                      ? userName(selectedAssigneeId)
+                      : ""}
+                    fetchOptions={searchAssignableUsers}
+                    onSelect={selectAssignee}
+                    placeholder="Search project members..."
+                  />
                 {:else}
-                  <Select.Root
-                    type="single"
-                    value={activeAssigneeId}
-                    onValueChange={(v) => changeAssignee(v)}
-                    disabled={fieldsLocked || !isPM || assigning}
-                  >
-                    <Select.Trigger id="task-assignee" size="md" class="w-full">
-                      <span class="truncate">
-                        {activeAssigneeId
-                          ? userName(activeAssigneeId)
-                          : "Unassigned"}
-                      </span>
-                    </Select.Trigger>
-                    <Select.Content class="p-1">
-                      {#each assignableUsers as user (user.id)}
-                        <Select.Item value={user.id} label={user.full_name}>
-                          {user.full_name}
-                        </Select.Item>
-                      {:else}
-                        <div class="px-2 py-1.5 text-xs text-base-content/60">
-                          No assignable users.
-                        </div>
-                      {/each}
-                    </Select.Content>
-                  </Select.Root>
+                  <UserCombobox
+                    id="task-assignee"
+                    bind:value={selectedAssigneeId}
+                    selectedLabel={selectedAssigneeId
+                      ? userName(selectedAssigneeId)
+                      : ""}
+                    fetchOptions={searchAssignableUsers}
+                    onSelect={selectAssignee}
+                    disabled={fieldsLocked || !isPM || saving}
+                    placeholder={selectedAssigneeId
+                      ? "Search project members..."
+                      : "Unassigned"}
+                  />
                 {/if}
               </Field.Field>
             </div>
-
-            <!-- Links -->
-            <Field.Field class="gap-1">
-              <Field.Label for="task-link-input">Links</Field.Label>
-              <div class="flex items-center gap-2">
-                <Input
-                  id="task-link-input"
-                  bind:value={newLinkUrl}
-                  placeholder="https://..."
-                  size="md"
-                  class="flex-1"
-                  disabled={fieldsLocked}
-                  onkeydown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addLink(newLinkUrl);
-                    }
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  size="md"
-                  icon
-                  onclick={() => addLink(newLinkUrl)}
-                  disabled={fieldsLocked || !newLinkUrl.trim()}
-                  aria-label="Add link"
-                >
-                  <PlusIcon class="size-4" />
-                </Button>
-              </div>
-              {#if draft.links && draft.links.length > 0}
-                <Item.Group class="pt-2 space-y-0 gap-2">
-                  {#each draft.links as link (link.id || link.url)}
-                    <Item.Root variant="outline" class="h-9 px-3! py-0!">
-                      {#snippet child({ props })}
-                        <a
-                          {...props}
-                          href={link.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <Item.Media variant="icon">
-                            <ExternalLinkIcon />
-                          </Item.Media>
-                          <Item.Content>
-                            <Item.Title class="truncate font-normal"
-                              >{link.url}</Item.Title
-                            >
-                          </Item.Content>
-                          <Item.Actions>
-                            <Button
-                              variant="ghost"
-                              size="md"
-                              icon
-                              onclick={() => removeLink(link.id || link.url)}
-                              disabled={fieldsLocked}
-                              aria-label="Remove link"
-                            >
-                              <XIcon class="size-4" />
-                            </Button>
-                          </Item.Actions>
-                        </a>
-                      {/snippet}
-                    </Item.Root>
-                  {/each}
-                </Item.Group>
-              {/if}
-            </Field.Field>
           </Field.FieldGroup>
+
+          <section class="space-y-2" aria-labelledby="deliverable-heading">
+            <h3 id="deliverable-heading" class="text-sm font-semibold">
+              Deliverable
+            </h3>
+            {#if deliverable?.has_deliverable}
+              {#if deliverable.deliverable_content}
+                <div
+                  class="rounded-lg border border-base-300 bg-base-200/50 px-3 py-2 text-sm whitespace-pre-wrap"
+                >
+                  {deliverable.deliverable_content}
+                </div>
+              {:else if deliverable.deliverable_url}
+                <a
+                  class="flex min-w-0 items-center gap-2 rounded-lg border border-base-300 px-3 py-2 text-sm hover:bg-base-200"
+                  href={deliverable.deliverable_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLinkIcon class="size-4 shrink-0" />
+                  <span class="min-w-0 flex-1 truncate">
+                    {deliverable.deliverable_url}
+                  </span>
+                </a>
+              {/if}
+            {:else}
+              <p class="text-sm text-base-content/60">
+                No deliverable has been submitted yet.
+              </p>
+            {/if}
+
+            {#if submittedLinks.length > 1}
+              <h4 class="pt-2 text-xs font-semibold text-base-content/60">
+                Submission history
+              </h4>
+              <ul class="space-y-2">
+                {#each submittedLinks as submission (submission.id)}
+                  <li>
+                    <a
+                      class="flex min-w-0 items-center gap-2 rounded-lg border border-base-300 px-3 py-2 text-sm hover:bg-base-200"
+                      href={submission.external_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLinkIcon class="size-4 shrink-0" />
+                      <span class="min-w-0 flex-1 truncate">
+                        {submission.external_link}
+                      </span>
+                      <span class="shrink-0 text-xs text-base-content/60">
+                        Version {submission.version ?? 1}
+                      </span>
+                    </a>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
         {/if}
       </Tabs.Content>
 
       {#if !isNew}
         <!-- COMMENTS TAB -->
-        <Tabs.Content value="comments" class="space-y-4 pt-3">
-          <Card.Root class="p-3!">
-            <Card.Content class="space-y-4 p-0!">
-              {#if comments.length === 0}
-                <Empty.Root>
-                  <Empty.Media variant="icon"><MessageSquareIcon /></Empty.Media
-                  >
-                  <Empty.Header>
-                    <Empty.Title>No comments yet</Empty.Title>
-                    <Empty.Description
-                      >Start the conversation with the project manager.</Empty.Description
-                    >
-                  </Empty.Header>
-                </Empty.Root>
-              {:else}
-                <div class="comment-scroll">
-                  <Item.Group class="space-y-0 gap-2">
-                    {#each comments as comment (comment.id)}
-                      <Item.Root variant="outline">
-                        <Item.Media>
-                          <Avatar class="size-8">
-                            <AvatarFallback class="text-xs"
-                              >{userInitials(comment.author_id)}</AvatarFallback
-                            >
-                          </Avatar>
-                        </Item.Media>
-                        <Item.Content>
-                          <Item.Title class="flex items-center gap-1.5">
-                            {userName(comment.author_id)}
-                            {#if comment.author_id === currentUser?.id}
-                              <span class="text-xs text-base-content/60"
-                                >(you)</span
-                              >
-                            {/if}
-                            <span
-                              class="ml-auto text-xs font-normal text-base-content/60"
-                            >
-                              • {timeAgo(comment.created_at)}
-                            </span>
-                          </Item.Title>
-                          {#if editingCommentId === comment.id}
-                            <Textarea
-                              bind:value={editBody}
-                              class="mt-1 min-h-[60px] resize-none"
-                            />
-                            <div class="mt-1 flex gap-2">
-                              <Button
-                                size="md"
-                                onclick={() => saveEditComment(comment.id)}
-                                disabled={!editBody.trim()}
-                              >
-                                Save
-                              </Button>
-                              <Button
-                                size="md"
-                                variant="outline"
-                                onclick={cancelEditComment}>Cancel</Button
-                              >
-                            </div>
-                          {:else}
-                            <Item.Description class="whitespace-pre-wrap"
-                              >{comment.body}</Item.Description
-                            >
-                          {/if}
-                        </Item.Content>
-                        {#if comment.author_id === currentUser?.id && editingCommentId !== comment.id}
-                          <Item.Actions>
-                            <DropdownMenu.DropdownMenu>
-                              <DropdownMenu.DropdownMenuTrigger>
-                                <Button
-                                  variant="ghost"
-                                  size="md"
-                                  icon
-                                  aria-label="Comment options"
-                                >
-                                  <EllipsisIcon class="size-4" />
-                                </Button>
-                              </DropdownMenu.DropdownMenuTrigger>
-                              <DropdownMenu.DropdownMenuContent align="end">
-                                <DropdownMenu.DropdownMenuItem
-                                  onclick={() =>
-                                    startEditComment(comment.id, comment.body)}
-                                >
-                                  <PencilIcon class="size-4" />
-                                  Edit
-                                </DropdownMenu.DropdownMenuItem>
-                                <DropdownMenu.DropdownMenuItem
-                                  variant="destructive"
-                                  onclick={() => deleteComment(comment.id)}
-                                >
-                                  <Trash2Icon class="size-4" />
-                                  Delete
-                                </DropdownMenu.DropdownMenuItem>
-                              </DropdownMenu.DropdownMenuContent>
-                            </DropdownMenu.DropdownMenu>
-                          </Item.Actions>
-                        {/if}
-                      </Item.Root>
-                    {/each}
-                  </Item.Group>
-                </div>
-              {/if}
-
-              <Separator />
-
-              <!-- Composer -->
-              <InputGroup.Root>
-                <InputGroup.Textarea
-                  bind:value={commentBody}
-                  placeholder="Write a comment..."
-                  class="min-h-[50px]"
-                />
-                <InputGroup.Addon align="block-end">
-                  <InputGroup.Button
-                    variant="default"
-                    size="md"
-                    icon
-                    onclick={sendComment}
-                    disabled={!commentBody.trim() || commentSending}
-                    aria-label="Send comment"
-                  >
-                    {#if commentSending}
-                      <RefreshCwIcon class="size-4 animate-spin" />
-                    {:else}
-                      <SendIcon class="size-4" />
-                    {/if}
-                  </InputGroup.Button>
-                </InputGroup.Addon>
-              </InputGroup.Root>
-            </Card.Content>
-          </Card.Root>
+        <Tabs.Content value="comments" class="space-y-4 pt-4">
+          <TaskCommentsTab
+            taskId={taskId ?? ""}
+            bind:comments
+            {users}
+            currentUser={currentUser as User | null}
+          />
         </Tabs.Content>
       {/if}
     </Tabs.Root>
@@ -1051,7 +904,7 @@
             onclick={handleDelete}
           >
             <Trash2Icon class="size-4" />
-            {deleteConfirm ? "Click again to confirm" : "Delete task"}
+            {deleteConfirm ? "Click again to confirm" : ""}
           </Button>
         </div>
       {/if}
@@ -1061,7 +914,7 @@
         >
         <Button
           onclick={handleSave}
-          disabled={saving || (!isNew && fieldsLocked)}
+          disabled={saving || (!isNew && isClosed)}
           size="md"
           class="gap-1.5"
         >
@@ -1107,58 +960,23 @@
   </div>
 {:else}
   <Dialog.Root bind:open>
-    <Dialog.Content class="max-h-[90vh] overflow-y-auto !max-w-xl p-4!">
+    <Dialog.Content class="max-h-[90vh] overflow-y-auto max-w-xl!">
       {@render detailBody()}
       {@render detailFooter("")}
     </Dialog.Content>
   </Dialog.Root>
 {/if}
 
-<!-- Submit work dialog -->
-<Dialog.Root bind:open={submitOpen}>
-  <Dialog.Content class="max-w-lg">
-    <Dialog.Header>
-      <Dialog.Title>Submit Work</Dialog.Title>
-      <Dialog.Description>
-        {task?.title} — this transitions the task to
-        <strong>For Review</strong>.
-      </Dialog.Description>
-    </Dialog.Header>
-    <Field.FieldGroup>
-      <Field.Field>
-        <Field.Label for="external-link">External Link</Field.Label>
-        <Input
-          id="external-link"
-          bind:value={externalLink}
-          placeholder="https://drive.google.com/..."
-        />
-      </Field.Field>
-      <Field.Field>
-        <Field.Label for="submit-notes">Notes</Field.Label>
-        <Textarea
-          id="submit-notes"
-          bind:value={notes}
-          placeholder="Describe what was completed"
-          class="min-h-[100px]"
-        />
-      </Field.Field>
-    </Field.FieldGroup>
-    <Dialog.Footer>
-      <Button variant="outline" onclick={() => (submitOpen = false)} size="md"
-        >Cancel</Button
-      >
-      <Button
-        disabled={submitting}
-        onclick={handleSubmit}
-        size="md"
-        class="gap-1.5"
-      >
-        <SendIcon class="size-4" />
-        {submitting ? "Submitting..." : "Submit for Review"}
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
+<SubmitWorkDialog
+  bind:open={submitOpen}
+  taskTitle={task?.title ?? ""}
+  {submissionMode}
+  bind:externalLink
+  bind:content
+  bind:notes
+  {submitting}
+  onSubmit={handleSubmit}
+/>
 
 <!-- Review dialog -->
 <Dialog.Root bind:open={reviewOpen}>
@@ -1227,15 +1045,3 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
-
-<style>
-  .comment-scroll {
-    max-height: 50vh;
-    overflow-y: auto;
-    border-radius: 8px;
-    outline: none;
-  }
-  .comment-scroll:focus-visible {
-    outline: 3px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
-  }
-</style>

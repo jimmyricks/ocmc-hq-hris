@@ -1,15 +1,18 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
   import * as Stats from "$lib/components/ui/stat/index.js";
   import * as Field from "$lib/components/ui/field/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { getToken } from "$lib/auth";
   import { auditApi } from "$lib/audit/api.js";
   import type { AuditLog, Ledger } from "$lib/audit/types.js";
+  import { useAppState } from "$lib/app-state.svelte.js";
+  import Pagination from "$lib/components/pagination.svelte";
 
+  const appState = useAppState();
   let tab = $state("audit");
   let loading = $state(false);
   let error = $state("");
@@ -22,10 +25,13 @@
     date_from: "",
     date_to: "",
   });
-  let auditResult = $state<{ total: number; items: AuditLog[] }>({
-    total: 0,
-    items: [],
-  });
+  let auditResult = $state<{
+    total: number;
+    page: number;
+    page_size: number;
+    items: AuditLog[];
+  }>({ total: 0, page: 1, page_size: 50, items: [] });
+  let auditPage = $state(appState.tablePage("audit-logs"));
 
   let ledgerFilters = $state({
     user_id: "",
@@ -34,10 +40,13 @@
     period_from: "",
     period_to: "",
   });
-  let ledgerResult = $state<{ total: number; items: Ledger[] }>({
-    total: 0,
-    items: [],
-  });
+  let ledgerResult = $state<{
+    total: number;
+    page: number;
+    page_size: number;
+    items: Ledger[];
+  }>({ total: 0, page: 1, page_size: 50, items: [] });
+  let ledgerPage = $state(appState.tablePage("audit-ledger"));
 
   const ledgerSummary = $derived(() => {
     const items = ledgerResult.items;
@@ -56,11 +65,21 @@
     };
   });
 
-  async function loadAudit() {
+  async function loadAudit(page = auditPage) {
     loading = true;
     error = "";
     try {
-      auditResult = await auditApi.getAuditLogs(auditFilters, 1, 50);
+      const result = await auditApi.getAuditLogs(
+        auditFilters,
+        page,
+        auditResult.page_size,
+      );
+      if (!result.items.length && result.total > 0 && page > 1) {
+        return loadAudit(Math.ceil(result.total / result.page_size));
+      }
+      auditResult = result;
+      auditPage = result.page;
+      appState.rememberTablePage("audit-logs", auditPage);
     } catch (err: any) {
       error = err.message || "Failed to load audit logs";
     } finally {
@@ -68,11 +87,21 @@
     }
   }
 
-  async function loadLedger() {
+  async function loadLedger(page = ledgerPage) {
     loading = true;
     error = "";
     try {
-      ledgerResult = await auditApi.getLedger(ledgerFilters, 1, 50);
+      const result = await auditApi.getLedger(
+        ledgerFilters,
+        page,
+        ledgerResult.page_size,
+      );
+      if (!result.items.length && result.total > 0 && page > 1) {
+        return loadLedger(Math.ceil(result.total / result.page_size));
+      }
+      ledgerResult = result;
+      ledgerPage = result.page;
+      appState.rememberTablePage("audit-ledger", ledgerPage);
     } catch (err: any) {
       error = err.message || "Failed to load ledger";
     } finally {
@@ -80,18 +109,30 @@
     }
   }
 
-  $effect(() => {
+  function setAuditPage(page: number) {
+    auditPage = page;
+    appState.rememberTablePage("audit-logs", page);
+    void loadAudit(page);
+  }
+
+  function setLedgerPage(page: number) {
+    ledgerPage = page;
+    appState.rememberTablePage("audit-ledger", page);
+    void loadLedger(page);
+  }
+
+  onMount(() => {
     if (!getToken()) {
-      goto("/login");
+      void goto("/login");
       return;
     }
-    loadAudit();
-    loadLedger();
+    void loadAudit(auditPage);
+    void loadLedger(ledgerPage);
   });
 </script>
 
 <div class="flex flex-col gap-6">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-wrap items-end justify-between gap-4">
     <h1 class="text-2xl font-bold tracking-tight">Audit & Ledger</h1>
   </div>
 
@@ -134,7 +175,9 @@
           <Input id="audit-actor" bind:value={auditFilters.actor_id} />
         </Field.Field>
         <div class="flex items-end">
-          <Button onclick={loadAudit} disabled={loading}>Search</Button>
+          <Button onclick={() => setAuditPage(1)} disabled={loading}
+            >Search</Button
+          >
         </div>
       </div>
 
@@ -155,32 +198,32 @@
 
       <p class="text-sm text-base-content/60">Total: {auditResult.total}</p>
 
-      <div class="border rounded-xl overflow-hidden">
-        <Table.Root>
-          <Table.Header class="bg-base-200/100">
-            <Table.Row>
-              <Table.Head class="w-[180px]">Timestamp</Table.Head>
-              <Table.Head>Action</Table.Head>
-              <Table.Head>Entity</Table.Head>
-              <Table.Head>Reference ID</Table.Head>
-              <Table.Head>Actor</Table.Head>
-              <Table.Head class="w-[200px]">Old Values</Table.Head>
-              <Table.Head class="w-[200px]">New Values</Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
+      <div class="overflow-hidden rounded-box border border-base-300 bg-base-100">
+        <table class="table table-zebra">
+          <thead>
+            <tr>
+              <th class="w-[180px]">Timestamp</th>
+              <th>Action</th>
+              <th>Entity</th>
+              <th>Reference ID</th>
+              <th>Actor</th>
+              <th class="w-[200px]">Old Values</th>
+              <th class="w-[200px]">New Values</th>
+            </tr>
+          </thead>
+          <tbody>
             {#each auditResult.items as record (record.id)}
-              <Table.Row>
-                <Table.Cell class="text-xs">{record.timestamp}</Table.Cell>
-                <Table.Cell>{record.action}</Table.Cell>
-                <Table.Cell>{record.reference_entity}</Table.Cell>
-                <Table.Cell class="truncate max-w-[120px]"
-                  >{record.reference_id}</Table.Cell
+              <tr>
+                <td class="text-xs">{record.timestamp}</td>
+                <td>{record.action}</td>
+                <td>{record.reference_entity}</td>
+                <td class="truncate max-w-[120px]"
+                  >{record.reference_id}</td
                 >
-                <Table.Cell class="truncate max-w-[120px]"
-                  >{record.actor_id}</Table.Cell
+                <td class="truncate max-w-[120px]"
+                  >{record.actor_id}</td
                 >
-                <Table.Cell>
+                <td>
                   {#if record.old_values}
                     <pre
                       class="text-xs max-w-[200px] overflow-x-auto">{JSON.stringify(
@@ -189,8 +232,8 @@
                         2,
                       )}</pre>
                   {/if}
-                </Table.Cell>
-                <Table.Cell>
+                </td>
+                <td>
                   {#if record.new_values}
                     <pre
                       class="text-xs max-w-[200px] overflow-x-auto">{JSON.stringify(
@@ -199,20 +242,32 @@
                         2,
                       )}</pre>
                   {/if}
-                </Table.Cell>
-              </Table.Row>
+                </td>
+              </tr>
             {:else}
-              <Table.Row>
-                <Table.Cell
+              <tr>
+                <td
                   colspan={7}
                   class="text-center text-base-content/60 py-6"
                 >
                   No audit logs found
-                </Table.Cell>
-              </Table.Row>
+                </td>
+              </tr>
             {/each}
-          </Table.Body>
-        </Table.Root>
+          </tbody>
+        </table>
+        <Pagination
+          page={auditPage}
+          pageSize={auditResult.page_size}
+          total={auditResult.total}
+          {loading}
+          pageSizeOptions={[25, 50, 100]}
+          onchange={setAuditPage}
+          onpagesizechange={(size) => {
+            auditResult.page_size = size;
+            setAuditPage(1);
+          }}
+        />
       </div>
     </Tabs.Content>
 
@@ -239,7 +294,9 @@
           />
         </Field.Field>
         <div class="flex items-end">
-          <Button onclick={loadLedger} disabled={loading}>Search</Button>
+          <Button onclick={() => setLedgerPage(1)} disabled={loading}
+            >Search</Button
+          >
         </div>
       </div>
 
@@ -267,7 +324,8 @@
       >
         <Stats.Item>
           <Stats.Title>Count</Stats.Title>
-          <Stats.Value class="tabular-nums">{ledgerSummary().count}</Stats.Value>
+          <Stats.Value class="tabular-nums">{ledgerSummary().count}</Stats.Value
+          >
         </Stats.Item>
         <Stats.Item>
           <Stats.Title>Credits</Stats.Title>
@@ -283,54 +341,68 @@
         </Stats.Item>
         <Stats.Item>
           <Stats.Title>Balance</Stats.Title>
-          <Stats.Value class="tabular-nums">{ledgerSummary().balance}</Stats.Value>
+          <Stats.Value class="tabular-nums"
+            >{ledgerSummary().balance}</Stats.Value
+          >
         </Stats.Item>
       </Stats.Root>
 
       <p class="text-sm text-base-content/60">Total: {ledgerResult.total}</p>
 
-      <div class="border rounded-xl overflow-hidden">
-        <Table.Root>
-          <Table.Header class="bg-base-200/100">
-            <Table.Row>
-              <Table.Head class="w-[120px]">Period</Table.Head>
-              <Table.Head>Reference</Table.Head>
-              <Table.Head>User</Table.Head>
-              <Table.Head>Type</Table.Head>
-              <Table.Head class="text-right">Amount</Table.Head>
-              <Table.Head>Description</Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
+      <div class="overflow-hidden rounded-box border border-base-300 bg-base-100">
+        <table class="table table-zebra">
+          <thead>
+            <tr>
+              <th class="w-[120px]">Period</th>
+              <th>Reference</th>
+              <th>User</th>
+              <th>Type</th>
+              <th class="text-right">Amount</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
             {#each ledgerResult.items as record (record.id)}
-              <Table.Row>
-                <Table.Cell class="text-xs">{record.period}</Table.Cell>
-                <Table.Cell class="truncate max-w-[140px]">
+              <tr>
+                <td class="text-xs">{record.period}</td>
+                <td class="truncate max-w-[140px]">
                   {record.reference_entity}:{record.reference_id}
-                </Table.Cell>
-                <Table.Cell class="truncate max-w-[120px]"
-                  >{record.user_id}</Table.Cell
+                </td>
+                <td class="truncate max-w-[120px]"
+                  >{record.user_id}</td
                 >
-                <Table.Cell>{record.entry_type}</Table.Cell>
-                <Table.Cell class="text-right font-mono">
+                <td>{record.entry_type}</td>
+                <td class="text-right font-mono">
                   {Number(record.amount ?? 0).toFixed(2)}
-                </Table.Cell>
-                <Table.Cell class="truncate max-w-[240px]"
-                  >{record.description}</Table.Cell
+                </td>
+                <td class="truncate max-w-[240px]"
+                  >{record.description}</td
                 >
-              </Table.Row>
+              </tr>
             {:else}
-              <Table.Row>
-                <Table.Cell
+              <tr>
+                <td
                   colspan={6}
                   class="text-center text-base-content/60 py-6"
                 >
                   No ledger entries found
-                </Table.Cell>
-              </Table.Row>
+                </td>
+              </tr>
             {/each}
-          </Table.Body>
-        </Table.Root>
+          </tbody>
+        </table>
+        <Pagination
+          page={ledgerPage}
+          pageSize={ledgerResult.page_size}
+          total={ledgerResult.total}
+          {loading}
+          pageSizeOptions={[25, 50, 100]}
+          onchange={setLedgerPage}
+          onpagesizechange={(size) => {
+            ledgerResult.page_size = size;
+            setLedgerPage(1);
+          }}
+        />
       </div>
     </Tabs.Content>
   </Tabs.Root>

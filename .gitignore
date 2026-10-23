@@ -29,3 +29,6 @@ build/
 .DS_Store
 Thumbs.db
 *.log
+
+# Corrupt venv backup (not source)
+backend/.venv.corrupt-bak/

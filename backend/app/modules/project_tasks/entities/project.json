@@ -89,6 +89,33 @@
       "field_type": "boolean",
       "required": false,
       "default": false
+    },
+    {
+      "name": "bahandi_artist_id",
+      "label": "Bahandi Artist ID",
+      "field_type": "integer",
+      "required": false,
+      "in_list_view": false
+    },
+    {
+      "name": "integration_kind",
+      "label": "Bahandi Project Type",
+      "field_type": "select",
+      "required": false,
+      "options": ["album", "photoshoot", "other"]
+    },
+    {
+      "name": "artist_portal_visible",
+      "label": "Visible in Artist Portal",
+      "field_type": "boolean",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "public_summary",
+      "label": "Artist-facing Summary",
+      "field_type": "text",
+      "required": false
     }
   ],
   "rbac": {

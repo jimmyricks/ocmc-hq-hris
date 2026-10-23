@@ -40,6 +40,28 @@ export interface PayrollLineItem {
 	updated_at?: string;
 }
 
+export interface PayrollInvoice {
+	id: string;
+	invoice_number: string;
+	payroll_entry_id: string;
+	payroll_period_id: string;
+	user_id: string;
+	total_tasks: number;
+	total_amount: number;
+	currency: string;
+	status: 'issued' | 'paid' | 'void';
+	issued_at?: string;
+	paid_at?: string;
+	period_label?: string;
+	period_start_date?: string;
+	period_end_date?: string;
+	line_items: Array<PayrollLineItem & {
+		task_title: string;
+		task_type_name?: string;
+		submission_notes?: string;
+	}>;
+}
+
 export interface PayrollSettings {
 	id?: string;
 	currency: string;

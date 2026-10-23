@@ -1,5 +1,16 @@
-import type { ApprovalDecision, Comment, Project, ProjectMember, Task, TaskAssignment, TaskApproval, TaskCategory, TaskSubmission, TaskType, User, WorkflowProgress } from './types.js';
-import { apiJSON, listEntity, listFiltered, getEntityRecord, saveEntity, deleteEntity } from '$lib/api/index.js';
+import type { ApprovalDecision, Comment, Project, ProjectMember, Task, TaskAssignment, TaskApproval, TaskCategory, TaskLink, TaskSubmission, TaskSummary, TaskType, User, WorkflowProgress, WorkflowTransition } from './types.js';
+import {
+	apiJSON,
+	listEntity,
+	listFiltered,
+	listFilteredPage,
+	getEntityRecord,
+	saveEntity,
+	deleteEntity,
+	toPaginatedResult,
+	type EntityFilter,
+	type PaginatedResult,
+} from '$lib/api/index.js';
 
 export const taskApi = {
 	async getCurrentUser(): Promise<User> {
@@ -43,6 +54,52 @@ export const taskApi = {
 		}
 		const res = await listFiltered('task', [{ field: 'project_id', op: 'eq', value: projectId }], 1, 100);
 		return (res.data ?? []) as Task[];
+	},
+
+	async getTasksForProjectPage(
+		projectId: string,
+		page = 1,
+		pageSize = 25,
+		search = '',
+		statusFilter = 'all',
+	): Promise<PaginatedResult<Task>> {
+		const filters: EntityFilter[] = projectId === 'all'
+			? []
+			: [{ field: 'project_id', op: 'eq', value: projectId }];
+		const statusesByFilter: Record<string, string[]> = {
+			draft_assigned: ['pending', 'draft', 'draft_assigned'],
+			in_progress: ['in_progress'],
+			for_review: ['submitted', 'for_review'],
+			needs_revision: ['needs_revision'],
+			approved: ['approved'],
+			closed: ['closed', 'approved', 'cancelled'],
+		};
+		const statuses = statusesByFilter[statusFilter];
+		if (statuses?.length) {
+			filters.push({ field: 'status', op: 'in', value: statuses });
+		}
+		return listFilteredPage<Task>('task', filters, page, pageSize, {
+			filterField: search.trim() ? 'title' : undefined,
+			filterValue: search.trim() || undefined,
+			sortField: 'updated_at',
+			sortOrder: 'desc',
+		});
+	},
+
+	async getMyTasksPage(
+		status: 'active' | 'completed' = 'active',
+		search = '',
+		page = 1,
+		pageSize = 25,
+	): Promise<PaginatedResult<Task>> {
+		const params = new URLSearchParams({
+			status,
+			page: String(page),
+			page_size: String(pageSize),
+		});
+		if (search.trim()) params.set('search', search.trim());
+		const res = await apiJSON(`/api/project-tasks/my-tasks?${params}`);
+		return toPaginatedResult<Task>(res, page, pageSize);
 	},
 
 	async getTask(id: string): Promise<Task | undefined> {
@@ -95,6 +152,11 @@ export const taskApi = {
 			{ field: 'project_id', op: 'eq', value: projectId },
 		], 1, 100);
 		return (res.data ?? []) as ProjectMember[];
+	},
+
+	async getProjectMemberCandidates(projectId: string): Promise<User[]> {
+		const res = await apiJSON(`/api/project-tasks/projects/${projectId}/member-candidates`);
+		return (res.data ?? []) as User[];
 	},
 
 	async addProjectMember(projectId: string, userId: string, role?: string): Promise<ProjectMember> {
@@ -164,6 +226,7 @@ export const taskApi = {
 		task_assignment_id: string;
 		notes?: string;
 		external_link?: string;
+		content?: string;
 		previous_submission_id?: string;
 	}): Promise<TaskSubmission> {
 		const res = await apiJSON('/api/project-tasks/submissions', {
@@ -171,6 +234,26 @@ export const taskApi = {
 			body: JSON.stringify(payload),
 		});
 		return res.data as TaskSubmission;
+	},
+
+	// Member-safe batch summary: active assignee + current deliverable per task.
+	async getTaskSummaries(taskIds: string[]): Promise<Record<string, TaskSummary>> {
+		if (!taskIds.length) return {};
+		const res = await apiJSON('/api/project-tasks/tasks/summaries', {
+			method: 'POST',
+			body: JSON.stringify({ task_ids: taskIds }),
+		});
+		return (res.data ?? {}) as Record<string, TaskSummary>;
+	},
+
+	async getTaskDeliverable(taskId: string): Promise<TaskSummary | undefined> {
+		const res = await apiJSON(`/api/project-tasks/tasks/${taskId}/deliverable`);
+		return res.data as TaskSummary | undefined;
+	},
+
+	async getTaskLinks(taskId: string): Promise<TaskLink[]> {
+		const res = await listFiltered('task_link', [{ field: 'task_id', op: 'eq', value: taskId }], 1, 100);
+		return (res.data ?? []) as TaskLink[];
 	},
 
 	async approveSubmission(
@@ -189,6 +272,24 @@ export const taskApi = {
 	async getWorkflowProgress(entity: string, recordId: string): Promise<WorkflowProgress> {
 		const res = await apiJSON(`/api/entity/${entity}/${recordId}/workflow-progress`);
 		return res.data as WorkflowProgress;
+	},
+
+	async getAvailableWorkflowTransitions(
+		entity: string,
+		state: string,
+		recordId?: string,
+	): Promise<WorkflowTransition[]> {
+		const params = new URLSearchParams({ current_state: state });
+		if (recordId) params.set('record_id', recordId);
+		const res = await apiJSON(`/api/workflow/${entity}/transitions?${params}`);
+		return ((res.data ?? []) as Array<WorkflowTransition & {
+			to_state_slug?: string;
+			to_state_label?: string;
+		}>).map((transition) => ({
+			...transition,
+			to_state: transition.to_state ?? transition.to_state_slug ?? '',
+			to_state_label: transition.to_state_label ?? transition.to_state_slug,
+		}));
 	},
 
 	async executeWorkflowTransition(entity: string, payload: {

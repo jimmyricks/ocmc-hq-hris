@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.core.exceptions import BadRequestError
 from app.core.framework.models.auth import Role, User
+from app.core.framework.models.infrastructure import WorkflowLedger
 from app.core.security import get_password_hash
 from app.infrastructure.database.repositories.entity_repository import EntityRepository
 from app.modules.collaboration_audit.models import Ledger, Notification, OcAuditLog
@@ -52,6 +53,26 @@ async def _init_test_database(db_engine):
 
 def _unique(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:10]}"
+
+
+def _current_period_range() -> tuple[date, date]:
+    today = date.today()
+    first, second = PayrollService.bi_monthly_periods(today.year, today.month)
+    selected = first if today.day <= 14 else second
+    return selected["start_date"], selected["end_date"]
+
+
+def _record_task_done(db_session, task: Task) -> None:
+    task.status = "done"
+    db_session.add(
+        WorkflowLedger(
+            entity_type="task",
+            record_id=task.id,
+            previous_state="approved",
+            next_state="done",
+            changed_at=datetime.utcnow(),
+        )
+    )
 
 
 async def _make_user(db_session, username: str, email: str, roles: list[Role]) -> User:
@@ -267,7 +288,7 @@ async def test_submission_rejected_for_non_assignee(
 ):
     with pytest.raises(Exception) as exc_info:
         await TaskSubmissionService.create_submission(
-            db_session, hr_user, {"task_assignment_id": assignment.id, "notes": "Hijacked"}
+            db_session, hr_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "Hijacked"}
         )
     assert "only submit" in str(exc_info.value).lower() or "assigned" in str(exc_info.value).lower()
 
@@ -277,7 +298,7 @@ async def test_submission_creates_version_and_moves_task_to_for_review(
     db_session, worker_user, assignment, task
 ):
     submission = await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "First draft"}
+        db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "First draft"}
     )
 
     assert submission.version == 1
@@ -297,7 +318,7 @@ async def test_submission_creates_version_and_moves_task_to_for_review(
     assert audit.scalar_one_or_none() is not None
     with pytest.raises(BadRequestError, match="only be submitted"):
         await TaskSubmissionService.create_submission(
-            db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "Duplicate"}
+            db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "Duplicate"}
         )
 
 
@@ -306,7 +327,7 @@ async def test_revision_chain_increments_version(
     db_session, worker_user, assignment, task
 ):
     first = await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "v1"}
+        db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "v1"}
     )
     await TaskApprovalService.create_approval(
         db_session, worker_user, first.id, "needs_revision", remarks="Fix formatting"
@@ -332,7 +353,7 @@ async def test_approval_approved_creates_ledger_credit_and_notifies(
     db_session, pm_user, worker_user, assignment, task, task_type
 ):
     submission = await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "Done"}
+        db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "Done"}
     )
 
     approval = await TaskApprovalService.create_approval(
@@ -372,7 +393,7 @@ async def test_approval_rejected_returns_task_to_in_progress(
     db_session, pm_user, worker_user, assignment, task
 ):
     submission = await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "Done"}
+        db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "Done"}
     )
 
     await TaskApprovalService.create_approval(
@@ -398,9 +419,10 @@ async def test_payroll_generation_excludes_unapproved_submissions(
     db_session, pm_user, hr_user, worker_user, assignment, task, task_type, project
 ):
     approved_sub = await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "Approved work"}
+        db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "Approved work"}
     )
     await TaskApprovalService.create_approval(db_session, pm_user, approved_sub.id, "approved")
+    _record_task_done(db_session, task)
 
     # Create a separate task and assignment with a submission that is never approved
     other_task = await _make_task(db_session, pm_user, project, task_type)
@@ -408,17 +430,18 @@ async def test_payroll_generation_excludes_unapproved_submissions(
         db_session, pm_user, other_task.id, worker_user.id
     )
     await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": other_assignment.id, "notes": "Draft"}
+        db_session, worker_user, {"task_assignment_id": other_assignment.id, "external_link": "https://example.com/deliverable", "notes": "Draft"}
     )
 
+    start_date, end_date = _current_period_range()
     period = await PayrollService.create_payroll_period(
         db_session,
         hr_user,
         {
             "period_type": "bi_monthly",
-            "start_date": date.today() - timedelta(days=5),
-            "end_date": date.today() + timedelta(days=5),
-            "cutoff": date.today() + timedelta(days=5),
+            "start_date": start_date,
+            "end_date": end_date,
+            "cutoff": end_date,
         },
     )
 
@@ -445,24 +468,33 @@ async def test_payroll_payment_creates_ledger_debit_and_updates_status(
     db_session, pm_user, hr_user, worker_user, assignment, task, task_type
 ):
     approved_sub = await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "Approved"}
+        db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "Approved"}
     )
     await TaskApprovalService.create_approval(db_session, pm_user, approved_sub.id, "approved")
+    _record_task_done(db_session, task)
 
+    start_date, end_date = _current_period_range()
     period = await PayrollService.create_payroll_period(
         db_session,
         hr_user,
         {
             "period_type": "bi_monthly",
-            "start_date": date.today() - timedelta(days=5),
-            "end_date": date.today() + timedelta(days=5),
-            "cutoff": date.today() + timedelta(days=5),
+            "start_date": start_date,
+            "end_date": end_date,
+            "cutoff": end_date,
         },
     )
 
     entries = await PayrollService.generate_payroll(db_session, hr_user, period.id)
     entry = entries[0]
     entry = await PayrollService.approve_payroll_entry(db_session, hr_user, entry.id)
+    from app.modules.payroll.models import Invoice
+
+    invoice = await db_session.scalar(
+        select(Invoice).where(Invoice.payroll_entry_id == entry.id)
+    )
+    assert invoice.status == "issued"
+    assert invoice.total_amount == entry.total_amount
     entry = await PayrollService.pay_payroll_entry(db_session, hr_user, entry.id)
 
     assert entry.status == "paid"
@@ -488,17 +520,20 @@ async def test_payroll_regeneration_is_blocked_after_entry_approval(
     db_session, pm_user, hr_user, worker_user, assignment, task
 ):
     submission = await TaskSubmissionService.create_submission(
-        db_session, worker_user, {"task_assignment_id": assignment.id, "notes": "Ready"}
+        db_session, worker_user, {"task_assignment_id": assignment.id, "external_link": "https://example.com/deliverable", "notes": "Ready"}
     )
     await TaskApprovalService.create_approval(
         db_session, pm_user, submission.id, "approved"
     )
+    _record_task_done(db_session, task)
+    start_date, end_date = _current_period_range()
     period = await PayrollService.create_payroll_period(
         db_session,
         hr_user,
         {
-            "start_date": date.today() - timedelta(days=5),
-            "end_date": date.today() + timedelta(days=5),
+            "start_date": start_date,
+            "end_date": end_date,
+            "cutoff": end_date,
         },
     )
     entry = (await PayrollService.generate_payroll(db_session, hr_user, period.id))[0]
@@ -510,7 +545,7 @@ async def test_payroll_regeneration_is_blocked_after_entry_approval(
 
 @pytest.mark.asyncio
 async def test_period_is_paid_only_after_all_employee_entries_are_paid(
-    db_session, pm_user, hr_user, worker_user, assignment, project, task_type
+    db_session, pm_user, hr_user, worker_user, assignment, project, task, task_type
 ):
     second_task = await _make_task(db_session, pm_user, project, task_type)
     db_session.add(
@@ -536,25 +571,28 @@ async def test_period_is_paid_only_after_all_employee_entries_are_paid(
     second_assignment = await ProjectTaskService.assign_task(
         db_session, pm_user, second_task.id, hr_user.id
     )
-    for assignee, task_assignment in (
-        (worker_user, assignment),
-        (hr_user, second_assignment),
+    for assignee, task_assignment, assigned_task in (
+        (worker_user, assignment, task),
+        (hr_user, second_assignment, second_task),
     ):
         submission = await TaskSubmissionService.create_submission(
             db_session,
             assignee,
-            {"task_assignment_id": task_assignment.id, "notes": "Approved work"},
+            {"task_assignment_id": task_assignment.id, "external_link": "https://example.com/deliverable", "notes": "Approved work"},
         )
         await TaskApprovalService.create_approval(
             db_session, pm_user, submission.id, "approved"
         )
+        _record_task_done(db_session, assigned_task)
 
+    start_date, end_date = _current_period_range()
     period = await PayrollService.create_payroll_period(
         db_session,
         hr_user,
         {
-            "start_date": date.today() - timedelta(days=5),
-            "end_date": date.today() + timedelta(days=5),
+            "start_date": start_date,
+            "end_date": end_date,
+            "cutoff": end_date,
         },
     )
     entries = await PayrollService.generate_payroll(db_session, hr_user, period.id)

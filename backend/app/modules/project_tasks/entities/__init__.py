@@ -8,6 +8,7 @@ from typing import Any
 
 from app.application.services.base_entity_api import BaseEntityAPI, Context, register_entity_api
 from app.core.serialization import record_to_dict
+from app.core.exceptions import BadRequestError
 from app.modules.collaboration_audit.services import AuditLogService
 from app.modules.project_tasks.services import ProjectTaskService
 
@@ -78,6 +79,14 @@ class TaskTypeAPI(AuditedEntityAPI):
 
 class TaskAPI(AuditedEntityAPI):
     """Task business hooks: generate task_key after create and audit."""
+
+    async def before_update(self, record: Any, data: dict[str, Any], ctx: Context) -> dict[str, Any]:
+        data = await super().before_update(record, data, ctx)
+        if "status" in data and data["status"] != getattr(record, "status", None):
+            raise BadRequestError(
+                "Task status changes must use an authorized workflow transition"
+            )
+        return data
 
     async def after_create(self, record: Any, ctx: Context) -> None:
         await ProjectTaskService.finalize_task(record, ctx.db)

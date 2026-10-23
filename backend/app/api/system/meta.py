@@ -68,32 +68,29 @@ async def get_modules():
     }
 
 
-@router.get("", name="get_meta_list")
-async def get_meta_list(
-    authorization: Optional[str] = Header(None),
-    db: AsyncSession = Depends(get_db)
+async def get_meta_list_for_user(
+    db: AsyncSession,
+    user: CurrentUser,
 ):
-    """List all entities the user has access to."""
-    user: CurrentUser = await get_current_user_from_token(authorization, db)
-    
+    """Build the permission-scoped entity list for an authenticated user."""
     # Get all entities
     entities = MetaRegistry.list_all()
-    
+
     # Get module orders
     module_orders_result = await db.execute(select(ModuleOrder))
     module_orders = {mo.module_name: mo.sort_order for mo in module_orders_result.scalars().all()}
-    
+
     # Get entity orders
     entity_orders_result = await db.execute(select(EntityOrder))
     entity_orders = {eo.entity_name: eo.sort_order for eo in entity_orders_result.scalars().all()}
-    
+
     # If no user or user is not authenticated, return empty list
     if not user or user.username == "anonymous":
         return {
-            "status": "success", 
+            "status": "success",
             "data": []
         }
-    
+
     # If user is SystemManager, return all entities
     if is_system_admin_user(user):
         entity_list = [
@@ -128,7 +125,7 @@ async def get_meta_list(
         for e in entity_list:
             del e["_module_order"]
             del e["_entity_order"]
-        
+
         return {
             "status": "success",
             "data": entity_list
@@ -189,7 +186,7 @@ async def get_meta_list(
                 "_entity_order": entity_orders.get(e.name, 999),
             }
         )
-    
+
     # Sort by module order, then entity order
     filtered_entities.sort(key=lambda x: (x["_module_order"], x["_entity_order"]))
     # Remove temporary sort fields
@@ -201,6 +198,16 @@ async def get_meta_list(
         "status": "success",
         "data": filtered_entities,
     }
+
+
+@router.get("", name="get_meta_list")
+async def get_meta_list(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all entities the user has access to."""
+    user: CurrentUser = await get_current_user_from_token(authorization, db)
+    return await get_meta_list_for_user(db, user)
 
 
 @router.post("/reload", name="reload_meta")

@@ -12,7 +12,7 @@
   import * as Field from "$lib/components/ui/field/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as Empty from "$lib/components/ui/empty/index.js";
-  import * as Item from "$lib/components/ui/item/index.js";
+
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
@@ -35,6 +35,8 @@
   // Create period dialog
   let createOpen = $state(false);
   let creating = $state(false);
+  let selectedMonth = $state("");
+  let selectedHalf = $state<"first" | "second">("first");
   let newPeriod = $state({
     label: "",
     start_date: "",
@@ -52,7 +54,7 @@
     require_hr_approval: true,
     notify_users_on_payment: true,
     default_period_start_day: 1,
-    default_period_end_day: 15,
+    default_period_end_day: 14,
   });
   let settingsId = $state<string | undefined>(undefined);
 
@@ -68,9 +70,7 @@
 
   const CURRENCIES = [OFFICIAL_CURRENCY];
   const CUTOFF_RULES = [
-    { value: "bi_monthly", label: "Bi-monthly (1-15, 16-end)" },
-    { value: "monthly", label: "Monthly" },
-    { value: "weekly", label: "Weekly" },
+    { value: "bi_monthly", label: "Bi-monthly (1-14, 15-end)" },
   ];
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -109,12 +109,12 @@
         settingsId = s.id;
         settings = {
           currency: OFFICIAL_CURRENCY,
-          cutoff_rule: s.cutoff_rule ?? "bi_monthly",
+          cutoff_rule: "bi_monthly",
           auto_approve_threshold: Number(s.auto_approve_threshold) || 0,
           require_hr_approval: s.require_hr_approval ?? true,
           notify_users_on_payment: s.notify_users_on_payment ?? true,
-          default_period_start_day: s.default_period_start_day ?? 1,
-          default_period_end_day: s.default_period_end_day ?? 15,
+          default_period_start_day: 1,
+          default_period_end_day: 14,
         };
       }
     } catch {
@@ -125,25 +125,55 @@
   // ── Create period ────────────────────────────────────────────────────
   function openCreateDialog() {
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-    const startDay = settings.default_period_start_day;
-    const endDay = settings.default_period_end_day;
-    const startDate = `${year}-${String(month).padStart(2, "0")}-${String(startDay).padStart(2, "0")}`;
-    const endDate = `${year}-${String(month).padStart(2, "0")}-${String(endDay).padStart(2, "0")}`;
-    newPeriod = {
-      label: `${now.toLocaleString("en-US", { month: "long" })} ${startDay}-${endDay}, ${year}`,
-      start_date: startDate,
-      end_date: endDate,
-      cutoff: endDate,
-    };
+    let candidate: { month: string; half: "first" | "second" } | undefined;
+    for (let offset = 0; offset < 24 && !candidate; offset += 1) {
+      const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      for (const half of ["first", "second"] as const) {
+        const range = periodRange(month, half);
+        if (
+          !periods.some(
+            (period) =>
+              period.start_date.slice(0, 10) === range.start_date &&
+              period.end_date.slice(0, 10) === range.end_date,
+          )
+        ) {
+          candidate = { month, half };
+          break;
+        }
+      }
+    }
+    selectedMonth =
+      candidate?.month ??
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    selectedHalf = candidate?.half ?? "first";
+    updateNewPeriod();
     createOpen = true;
   }
 
-  function updatePeriodLabel() {
-    if (newPeriod.start_date && newPeriod.end_date) {
-      newPeriod.label = `${newPeriod.start_date} → ${newPeriod.end_date}`;
-    }
+  function periodRange(month: string, half: "first" | "second") {
+    const [year, monthNumber] = month.split("-").map(Number);
+    const lastDay = new Date(year, monthNumber, 0).getDate();
+    const startDay = half === "first" ? 1 : 15;
+    const endDay = half === "first" ? 14 : lastDay;
+    const dateString = (day: number) =>
+      `${year}-${String(monthNumber).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return {
+      start_date: dateString(startDay),
+      end_date: dateString(endDay),
+      label: `${new Date(year, monthNumber - 1).toLocaleString("en-US", { month: "long" })} ${startDay}–${endDay}, ${year}`,
+    };
+  }
+
+  function updateNewPeriod() {
+    if (!selectedMonth) return;
+    const range = periodRange(selectedMonth, selectedHalf);
+    newPeriod = {
+      label: range.label,
+      start_date: range.start_date,
+      end_date: range.end_date,
+      cutoff: range.end_date,
+    };
   }
 
   async function handleCreate() {
@@ -180,13 +210,13 @@
       const saved = await payrollApi.saveSettings(
         {
           currency: settings.currency,
-          cutoff_rule: settings.cutoff_rule,
+          cutoff_rule: "bi_monthly",
           auto_approve_threshold: Number(settings.auto_approve_threshold) || 0,
           require_hr_approval: settings.require_hr_approval,
           notify_users_on_payment: settings.notify_users_on_payment,
           default_period_start_day:
             Number(settings.default_period_start_day) || 1,
-          default_period_end_day: Number(settings.default_period_end_day) || 15,
+          default_period_end_day: 14,
         },
         settingsId,
       );
@@ -203,10 +233,10 @@
 
 <div class="flex flex-col gap-6">
   <!-- Header -->
-  <div class="flex items-center justify-between">
+  <div class="flex flex-wrap items-end justify-between gap-4">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Payroll</h1>
-      <p class="text-sm text-base-content/60">
+      <p class="mt-1 text-sm text-base-content/60">
         Generate, review, and disburse payroll per user.
       </p>
     </div>
@@ -234,18 +264,18 @@
 
   <!-- Periods list -->
   {#if loading}
-    <Item.Group>
+    <ul class="list w-full rounded-box bg-base-100 shadow-md">
       {#each Array.from({ length: 3 }) as _, i (i)}
-        <Item.Root variant="outline">
-          <Item.Media variant="icon"><Skeleton class="size-5" /></Item.Media>
-          <Item.Content>
-            <Item.Title><Skeleton class="h-4 w-40" /></Item.Title>
-            <Item.Description><Skeleton class="h-3 w-28" /></Item.Description>
-          </Item.Content>
-          <Item.Actions><Skeleton class="h-5 w-12" /></Item.Actions>
-        </Item.Root>
+        <li class="list-row items-center">
+          <div><Skeleton class="size-10 rounded-box" /></div>
+          <div>
+            <Skeleton class="h-4 w-40" />
+            <Skeleton class="mt-1 h-3 w-28" />
+          </div>
+          <Skeleton class="h-5 w-12" />
+        </li>
       {/each}
-    </Item.Group>
+    </ul>
   {:else if periods.length === 0}
     <Card.Root>
       <Card.Content class="pt-6">
@@ -255,39 +285,39 @@
             <Empty.Title>No payroll periods</Empty.Title>
             <Empty.Description>
               Create a bi-monthly payroll period to get started. Generation will
-              scan approved submissions, create per-user entries, and auto-close
-              tasks.
+              include approved tasks when they enter Done and create per-user
+              entries.
             </Empty.Description>
           </Empty.Header>
         </Empty.Root>
       </Card.Content>
     </Card.Root>
   {:else}
-    <Item.Group>
+    <ul class="list w-full rounded-box bg-base-100 shadow-md">
       {#each periods as period (period.id)}
         {@const ps =
           PERIOD_STATUS_META[period.status] ?? PERIOD_STATUS_META.open}
-        <Item.Root variant="outline">
-          {#snippet child({ props })}
-            <a href={`/payroll/${period.id}`} {...props}>
-              <Item.Media variant="icon"><CalendarIcon /></Item.Media>
-              <Item.Content>
-                <Item.Title>{period.label}</Item.Title>
-                <Item.Description>
-                  {formatDate(period.start_date)} → {formatDate(
-                    period.end_date,
-                  )}
-                </Item.Description>
-              </Item.Content>
-              <Item.Actions>
-                <Badge variant={ps.variant}>{ps.label}</Badge>
-                <ChevronRightIcon class="size-4 text-base-content/60" />
-              </Item.Actions>
-            </a>
-          {/snippet}
-        </Item.Root>
+        <li>
+          <a class="list-row items-center" href={`/payroll/${period.id}`}>
+            <div
+              class="grid size-10 place-items-center rounded-box bg-base-200 text-base-content/60"
+            >
+              <CalendarIcon class="size-5" />
+            </div>
+            <div>
+              <div class="font-medium">{period.label}</div>
+              <div class="text-xs opacity-60">
+                {formatDate(period.start_date)} → {formatDate(period.end_date)}
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <Badge variant={ps.variant}>{ps.label}</Badge>
+              <ChevronRightIcon class="size-4 text-base-content/60" />
+            </div>
+          </a>
+        </li>
       {/each}
-    </Item.Group>
+    </ul>
   {/if}
 </div>
 
@@ -302,45 +332,45 @@
     </Dialog.Header>
 
     <Field.FieldGroup>
-      <Field.Field>
-        <Field.Label for="period-label">Label</Field.Label>
-        <Input
-          id="period-label"
-          bind:value={newPeriod.label}
-          placeholder="e.g. July 1-15, 2026"
-        />
-      </Field.Field>
-
       <div class="grid grid-cols-2 gap-4">
         <Field.Field>
-          <Field.Label for="period-start">Start Date</Field.Label>
+          <Field.Label for="period-month">Month</Field.Label>
           <Input
-            id="period-start"
-            type="date"
-            bind:value={newPeriod.start_date}
-            oninput={updatePeriodLabel}
+            id="period-month"
+            type="month"
+            bind:value={selectedMonth}
+            oninput={updateNewPeriod}
           />
         </Field.Field>
-
         <Field.Field>
-          <Field.Label for="period-end">End Date</Field.Label>
-          <Input
-            id="period-end"
-            type="date"
-            bind:value={newPeriod.end_date}
-            oninput={() => {
-              if (!newPeriod.cutoff || newPeriod.cutoff < newPeriod.end_date) {
-                newPeriod.cutoff = newPeriod.end_date;
-              }
-              updatePeriodLabel();
+          <Field.Label for="period-half">Pay period</Field.Label>
+          <Select.Root
+            type="single"
+            value={selectedHalf}
+            onValueChange={(value) => {
+              selectedHalf = value as "first" | "second";
+              updateNewPeriod();
             }}
-          />
+          >
+            <Select.Trigger id="period-half" class="w-full">
+              {selectedHalf === "first" ? "1st–14th" : "15th–month-end"}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="first" label="1st–14th">1st–14th</Select.Item>
+              <Select.Item value="second" label="15th–month-end">
+                15th–month-end
+              </Select.Item>
+            </Select.Content>
+          </Select.Root>
         </Field.Field>
       </div>
-
+      <p class="text-sm text-base-content/60">
+        {newPeriod.start_date} → {newPeriod.end_date}. The cutoff is the final
+        day of this period.
+      </p>
       <Field.Field>
-        <Field.Label for="period-cutoff">Cutoff Date</Field.Label>
-        <Input id="period-cutoff" type="date" bind:value={newPeriod.cutoff} />
+        <Field.Label for="period-label">Period label</Field.Label>
+        <Input id="period-label" bind:value={newPeriod.label} />
       </Field.Field>
     </Field.FieldGroup>
 
@@ -405,35 +435,6 @@
           </Select.Content>
         </Select.Root>
       </Field.Field>
-
-      <div class="grid grid-cols-2 gap-4">
-        <Field.Field>
-          <Field.Label for="settings-start-day"
-            >Default Period Start Day</Field.Label
-          >
-          <Input
-            id="settings-start-day"
-            type="number"
-            min="1"
-            max="31"
-            bind:value={settings.default_period_start_day}
-          />
-        </Field.Field>
-        <Field.Field>
-          <Field.Label for="settings-end-day"
-            >Default Period End Day</Field.Label
-          >
-          <Input
-            id="settings-end-day"
-            type="number"
-            min="1"
-            max="31"
-            bind:value={settings.default_period_end_day}
-          />
-        </Field.Field>
-      </div>
-
-      <Separator />
 
       <Field.Field>
         <Field.Label for="settings-threshold"

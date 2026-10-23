@@ -90,7 +90,21 @@ class RowScopeService:
         if ROW_SCOPE_OWNER_OR_ASSIGNED in scopes:
             if owner_condition is not None:
                 conditions.append(owner_condition)
-            allowed_states = await self._get_allowed_states_for_user(entity, role_names)
+            workflow_workspace_id = None
+            if workspace_entity:
+                from app.modules.workspaces.services import WorkspaceService
+
+                context = await WorkspaceService.resolve_context(
+                    self.db,
+                    user_id,
+                    role_names,
+                    is_superuser,
+                    self.requested_workspace_id,
+                )
+                workflow_workspace_id = context.active_workspace_id
+            allowed_states = await self._get_allowed_states_for_user(
+                entity, role_names, workflow_workspace_id
+            )
             if allowed_states and hasattr(model, "workflow_state"):
                 conditions.append(getattr(model, "workflow_state").in_(allowed_states))
 
@@ -146,7 +160,9 @@ class RowScopeService:
             return True
 
         if ROW_SCOPE_OWNER_OR_ASSIGNED in scopes:
-            allowed_states = await self._get_allowed_states_for_user(entity, role_names)
+            allowed_states = await self._get_allowed_states_for_user(
+                entity, role_names, getattr(record, "workspace_id", None)
+            )
             if allowed_states and hasattr(record, "workflow_state"):
                 return getattr(record, "workflow_state") in allowed_states
 
@@ -190,11 +206,6 @@ class RowScopeService:
         if not self._is_workspace_entity(entity, object()):
             return False
         from app.modules.workspaces.services import WorkspaceService
-
-        if WorkspaceService.is_hr(role_names) and not WorkspaceService.is_system_admin(
-            role_names, is_superuser
-        ):
-            return False
 
         try:
             await WorkspaceService.resolve_context(
@@ -252,14 +263,23 @@ class RowScopeService:
         )
         if context.is_global:
             return query
-        if not context.workspace_ids:
-            return query.where(False)
 
         workspace_ids = context.workspace_ids
         is_admin = WorkspaceService.is_admin(role_names, is_superuser)
         project_member_ids = select(ProjectMember.project_id).where(
             ProjectMember.user_id == user_id,
             ProjectMember.is_active.is_(True),
+        )
+        managed_project_ids = select(ProjectMember.project_id).where(
+            ProjectMember.user_id == user_id,
+            ProjectMember.role == "manager",
+            ProjectMember.is_active.is_(True),
+        )
+        project_manager_ids = select(Project.id).where(
+            or_(
+                Project.id.in_(managed_project_ids),
+                Project.manager_id == user_id,
+            )
         )
         active_task_ids = (
             select(TaskAssignment.task_id)
@@ -272,6 +292,19 @@ class RowScopeService:
         )
         assigned_project_ids = select(Task.project_id).where(
             Task.id.in_(active_task_ids)
+        )
+        managed_task_ids = select(Task.id).where(
+            Task.project_id.in_(project_manager_ids)
+        )
+        member_task_ids = select(Task.id).where(
+            Task.project_id.in_(project_member_ids)
+        )
+        visible_task_ids = select(Task.id).where(
+            or_(
+                Task.id.in_(active_task_ids),
+                Task.id.in_(managed_task_ids),
+                Task.id.in_(member_task_ids),
+            )
         )
         supervisor = (
             not is_admin
@@ -288,6 +321,7 @@ class RowScopeService:
                 or_(
                     Project.id.in_(project_member_ids),
                     Project.id.in_(assigned_project_ids),
+                    Project.id.in_(project_manager_ids),
                 ),
             )
         )
@@ -305,7 +339,13 @@ class RowScopeService:
         if entity == "project_member":
             condition = ProjectMember.project_id.in_(visible_projects)
             if not (is_admin or supervisor):
-                condition = ProjectMember.user_id == user_id
+                condition = and_(
+                    condition,
+                    or_(
+                        ProjectMember.user_id == user_id,
+                        ProjectMember.project_id.in_(project_manager_ids),
+                    ),
+                )
             return query.where(condition)
         if entity == "task":
             if is_admin or supervisor:
@@ -313,17 +353,23 @@ class RowScopeService:
                     Task.workspace_id.in_(workspace_ids),
                     Task.project_id.in_(visible_projects),
                 )
-            return query.where(Task.id.in_(active_task_ids))
+            return query.where(Task.id.in_(visible_task_ids))
 
         task_ids = (
             select(Task.id).where(Task.workspace_id.in_(workspace_ids))
             if is_admin or supervisor
-            else active_task_ids
+            else visible_task_ids
         )
         if entity == "task_assignment":
             condition = TaskAssignment.task_id.in_(task_ids)
             if not (is_admin or supervisor):
-                condition = and_(condition, TaskAssignment.user_id == user_id)
+                condition = or_(
+                    and_(
+                        TaskAssignment.task_id.in_(active_task_ids),
+                        TaskAssignment.user_id == user_id,
+                    ),
+                    TaskAssignment.task_id.in_(managed_task_ids),
+                )
             return query.where(condition)
         if entity == "task_submission":
             assignment_ids = select(TaskAssignment.id).where(
@@ -331,7 +377,10 @@ class RowScopeService:
             )
             if not (is_admin or supervisor):
                 assignment_ids = select(TaskAssignment.id).where(
-                    TaskAssignment.user_id == user_id
+                    or_(
+                        TaskAssignment.user_id == user_id,
+                        TaskAssignment.task_id.in_(managed_task_ids),
+                    )
                 )
             return query.where(TaskSubmission.task_assignment_id.in_(assignment_ids))
         if entity == "task_approval":
@@ -340,7 +389,10 @@ class RowScopeService:
             )
             if not (is_admin or supervisor):
                 assignment_ids = select(TaskAssignment.id).where(
-                    TaskAssignment.user_id == user_id
+                    or_(
+                        TaskAssignment.user_id == user_id,
+                        TaskAssignment.task_id.in_(managed_task_ids),
+                    )
                 )
             submission_ids = select(TaskSubmission.id).where(
                 TaskSubmission.task_assignment_id.in_(assignment_ids)
@@ -477,7 +529,7 @@ class RowScopeService:
 
         from app.core.framework.models.auth import User
         from app.modules.project_tasks.models import Project, ProjectMember, TaskType
-        from app.modules.workspaces.models import Workspace, WorkspaceMembership
+        from app.modules.workspaces.models import Workspace
         from app.modules.workspaces.services import WorkspaceService
 
         context = await WorkspaceService.resolve_context(
@@ -508,18 +560,10 @@ class RowScopeService:
             if entity == "project" and data.get("is_continuous"):
                 data["end_date"] = None
             manager_id = data.get("manager_id")
-            if manager_id and not await self.db.scalar(
-                select(WorkspaceMembership.id)
-                .join(User, User.id == WorkspaceMembership.user_id)
-                .where(
-                    WorkspaceMembership.workspace_id == target_workspace_id,
-                    WorkspaceMembership.user_id == manager_id,
-                    WorkspaceMembership.is_active.is_(True),
-                    User.is_active.is_(True),
-                )
-            ):
+            manager = await self.db.get(User, manager_id) if manager_id else None
+            if manager_id and (not manager or not manager.is_active):
                 raise BadRequestError(
-                    "Project manager must be an active member of the workspace"
+                    "Project manager must be an active user"
                 )
             return data
 
@@ -554,16 +598,8 @@ class RowScopeService:
             member = await self.db.get(User, data.get("user_id"))
             if not member or not member.is_active:
                 raise NotFoundError("Active user", data.get("user_id"))
-            if not project.workspace_id or not await self.db.scalar(
-                select(WorkspaceMembership.id).where(
-                    WorkspaceMembership.workspace_id == project.workspace_id,
-                    WorkspaceMembership.user_id == member.id,
-                    WorkspaceMembership.is_active.is_(True),
-                )
-            ):
-                raise BadRequestError(
-                    "Project members must have an active workspace membership"
-                )
+            if not project.workspace_id:
+                raise BadRequestError("Project must belong to an active workspace")
             if not is_admin and (
                 project.workspace_id != context.active_workspace_id
                 or await self._workspace_role(
@@ -611,6 +647,55 @@ class RowScopeService:
                     raise ForbiddenError("You cannot add links to this task")
         return data
 
+    async def authorize_workflow_transition(
+        self,
+        entity: str,
+        record: Any,
+        user: Any,
+    ) -> None:
+        """Authorize a state-only transition using workspace membership scope."""
+        if not self._is_workspace_entity(entity, record.__class__):
+            await self.authorize_record_write(entity, record, {}, user)
+            return
+
+        from app.modules.workspaces.services import WorkspaceService
+
+        context = await WorkspaceService.resolve_context(
+            self.db,
+            user.id,
+            user.roles,
+            user.is_superuser,
+            self.requested_workspace_id,
+        )
+        if WorkspaceService.is_admin(user.roles, user.is_superuser):
+            return
+        workspace_id = getattr(record, "workspace_id", None)
+        workspace_role = (
+            await self._workspace_role(
+                workspace_id, user.id, user.roles, user.is_superuser
+            )
+            if workspace_id
+            else None
+        )
+        if workspace_id == context.active_workspace_id and workspace_role:
+            return
+        if entity == "task" and workspace_id:
+            from app.modules.project_tasks.models import Project, ProjectMember
+
+            project = await self.db.get(Project, record.project_id)
+            project_role = await self.db.scalar(
+                select(ProjectMember.role).where(
+                    ProjectMember.project_id == record.project_id,
+                    ProjectMember.user_id == user.id,
+                    ProjectMember.is_active.is_(True),
+                )
+            )
+            if project_role or (project and project.manager_id == user.id):
+                return
+        if not workspace_id or workspace_id != context.active_workspace_id:
+            raise ForbiddenError("Transitions are limited to the active workspace")
+        raise ForbiddenError("Workspace membership is required for transitions")
+
     async def authorize_record_write(
         self,
         entity: str,
@@ -637,7 +722,6 @@ class RowScopeService:
             TaskLink,
             TaskType,
         )
-        from app.modules.workspaces.models import WorkspaceMembership
         from app.modules.workspaces.services import WorkspaceService
 
         context = await WorkspaceService.resolve_context(
@@ -683,18 +767,10 @@ class RowScopeService:
             if data.get("is_continuous", record.is_continuous):
                 data["end_date"] = None
             manager_id = data.get("manager_id", record.manager_id)
-            if manager_id and not await self.db.scalar(
-                select(WorkspaceMembership.id)
-                .join(User, User.id == WorkspaceMembership.user_id)
-                .where(
-                    WorkspaceMembership.workspace_id == workspace_id,
-                    WorkspaceMembership.user_id == manager_id,
-                    WorkspaceMembership.is_active.is_(True),
-                    User.is_active.is_(True),
-                )
-            ):
+            manager = await self.db.get(User, manager_id) if manager_id else None
+            if manager_id and (not manager or not manager.is_active):
                 raise BadRequestError(
-                    "Project manager must be an active member of the workspace"
+                    "Project manager must be an active user"
                 )
         elif entity == "task":
             project = await self.db.get(Project, data.get("project_id", record.project_id))
@@ -710,15 +786,12 @@ class RowScopeService:
             project = await self.db.get(Project, record.project_id)
             member_id = data.get("user_id", record.user_id)
             member = await self.db.get(User, member_id)
-            if not project or not member or not member.is_active or not await self.db.scalar(
-                select(WorkspaceMembership.id).where(
-                    WorkspaceMembership.workspace_id == project.workspace_id,
-                    WorkspaceMembership.user_id == member_id,
-                    WorkspaceMembership.is_active.is_(True),
-                )
+            if not project or not member or (
+                data.get("is_active", record.is_active)
+                and not member.is_active
             ):
                 raise BadRequestError(
-                    "Project members must have an active workspace membership"
+                    "Active project members must be active users"
                 )
         elif entity == "task_link":
             project_member = (
@@ -766,14 +839,19 @@ class RowScopeService:
         return await self.prepare_create_data(entity, data, user)
 
     async def _get_allowed_states_for_user(
-        self, entity: str, role_names: list[str]
+        self,
+        entity: str,
+        role_names: list[str],
+        workspace_id: str | None = None,
     ) -> set[str]:
         """Return states that have an outgoing transition allowed for any of the user's roles.
 
         The pseudo-role "Owner" is ignored because the ``created_by = :user_id`` check
         already covers record ownership.
         """
-        workflow = await self.workflow_repo.get_workflow(entity)
+        workflow = await self.workflow_repo.get_workflow(
+            entity, workspace_id=workspace_id
+        )
         if not workflow:
             return set()
 

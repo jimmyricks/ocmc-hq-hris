@@ -28,15 +28,20 @@ from app.infrastructure.database.repositories.naming_repository import NamingRep
 from app.meta.registry import MetaRegistry
 from app.modules.collaboration_audit.services import AuditLogService, LedgerService, NotificationService
 from app.modules.project_tasks.models import (
+    BahandiPressOutbox,
     Project,
     ProjectMember,
     Task,
     TaskApproval,
     TaskAssignment,
+    TaskLink,
     TaskSubmission,
     TaskType,
 )
-from app.modules.workspaces.models import WorkspaceMembership
+from app.modules.project_tasks.bahandi_integration import press_submission_payload
+from app.infrastructure.database.repositories.workflow_repository import WorkflowRepository
+from app.application.services.workflows.workflow_ledger_service import log_workflow_transition
+from app.application.utils.doc_utils import get_user_id
 
 
 def _id_or_uuid(generated_id: str | None) -> str:
@@ -47,6 +52,65 @@ def _id_or_uuid(generated_id: str | None) -> str:
 def _task_label(task: Task) -> str:
     """Return the task key if present, otherwise the task id."""
     return getattr(task, "task_key", None) or task.id
+
+
+async def _find_task_transition(
+    db: AsyncSession,
+    user: Any,
+    task: Task,
+    action_slugs: tuple[str, ...],
+):
+    """Find an authorized transition in the task's workspace workflow."""
+    repository = WorkflowRepository(db)
+    workflow = await repository.get_workflow(
+        "task", workspace_id=getattr(task, "workspace_id", None)
+    )
+    if not workflow:
+        return None, None
+
+    last_error = None
+    for action_slug in action_slugs:
+        transition, error = await repository.find_transition(
+            "task",
+            task.status,
+            action_slug,
+            user,
+            task.id,
+            workspace_id=task.workspace_id,
+            workflow=workflow,
+            doc=task,
+        )
+        if transition:
+            return workflow, transition
+        last_error = error
+        if error and "permission" in error.lower():
+            raise ForbiddenError(error)
+
+    raise BadRequestError(
+        last_error
+        or f"No allowed task workflow transition found for actions: {', '.join(action_slugs)}"
+    )
+
+
+async def _apply_task_workflow_transition(
+    db: AsyncSession,
+    user: Any,
+    task: Task,
+    transition,
+) -> None:
+    old_status = task.status
+    task.status = transition.to_state_link.state.slug
+    task.last_modified_by = user.id
+    await log_workflow_transition(
+        entity_type="task",
+        record_id=task.id,
+        previous_state=old_status,
+        next_state=task.status,
+        action=transition.action_ref.slug if transition.action_ref else None,
+        changed_by=get_user_id(user),
+        db=db,
+        notes="Task lifecycle service transition",
+    )
 
 
 class ProjectTaskService:
@@ -94,7 +158,10 @@ class ProjectTaskService:
         naming_service = NamingAppService(NamingRepository(db))
         meta = MetaRegistry.get("task")
         data["id"] = _id_or_uuid(await naming_service.generate_id(meta.naming, "task"))
-        data.setdefault("status", "pending")
+        workflow_initial = await WorkflowRepository(db).get_initial_state(
+            "task", workspace_id=project.workspace_id
+        )
+        data["status"] = workflow_initial or data.get("status") or "pending"
         data.setdefault("priority", DEFAULT_TASK_PRIORITY)
         data["created_by"] = user.id
         data["last_modified_by"] = user.id
@@ -153,7 +220,12 @@ class ProjectTaskService:
         )
 
         new_status = old_status
-        if old_status == "pending":
+        has_configured_workflow = bool(
+            await WorkflowRepository(db).get_workflow(
+                "task", workspace_id=task.workspace_id
+            )
+        )
+        if old_status == "pending" and not has_configured_workflow:
             new_status = "in_progress"
             task.status = new_status
 
@@ -191,7 +263,7 @@ class ProjectTaskService:
         if not task:
             raise NotFoundError("Task", task_id)
 
-        if task.status in {"approved", "closed", "cancelled"}:
+        if task.status in {"approved", "done", "closed", "cancelled"}:
             raise BadRequestError("Cannot assign a task that is already completed or cancelled")
 
         assignee = await db.get(User, user_id)
@@ -205,15 +277,6 @@ class ProjectTaskService:
         task_type = await db.get(TaskType, task.task_type_id)
         if not task_type or task_type.workspace_id != project.workspace_id:
             raise BadRequestError("Task type must belong to the task's workspace")
-        workspace_membership = await db.scalar(
-            select(WorkspaceMembership.id).where(
-                WorkspaceMembership.workspace_id == project.workspace_id,
-                WorkspaceMembership.user_id == user_id,
-                WorkspaceMembership.is_active.is_(True),
-            )
-        )
-        if not workspace_membership:
-            raise BadRequestError("Assignees must be active members of the task workspace")
         membership = await db.scalar(
             select(ProjectMember.id).where(
                 ProjectMember.project_id == project.id,
@@ -337,20 +400,16 @@ class TaskSubmissionService:
         task_type = await db.get(TaskType, task.task_type_id)
         if not task_type or task_type.workspace_id != project.workspace_id:
             raise BadRequestError("Task type must belong to the task's workspace")
-        if task.status in {"approved", "closed", "cancelled"}:
+        if task.status in {"approved", "done", "closed", "cancelled"}:
             raise BadRequestError("Cannot submit work for a completed or cancelled task")
-        if task.status not in {"in_progress", "needs_revision"}:
+        workflow, transition = await _find_task_transition(
+            db, user, task, ("submit_for_review", "submit")
+        )
+        if not workflow and task.status not in {"in_progress", "needs_revision"}:
             raise BadRequestError(
                 "Work can only be submitted while the task is in progress or needs revision"
             )
         if not getattr(user, "is_superuser", False):
-            workspace_membership = await db.scalar(
-                select(WorkspaceMembership.id).where(
-                    WorkspaceMembership.workspace_id == project.workspace_id,
-                    WorkspaceMembership.user_id == user.id,
-                    WorkspaceMembership.is_active.is_(True),
-                )
-            )
             project_membership = await db.scalar(
                 select(ProjectMember.id).where(
                     ProjectMember.project_id == project.id,
@@ -358,8 +417,8 @@ class TaskSubmissionService:
                     ProjectMember.is_active.is_(True),
                 )
             )
-            if not workspace_membership or not project_membership:
-                raise ForbiddenError("You must be an active workspace project member to submit")
+            if not project_membership:
+                raise ForbiddenError("You must be an active project member to submit")
 
         previous_submission_id = data.get("previous_submission_id")
         previous_submission = None
@@ -369,6 +428,30 @@ class TaskSubmissionService:
                 raise NotFoundError("Previous Submission", previous_submission_id)
             if previous_submission.task_assignment_id != assignment_id:
                 raise BadRequestError("Previous submission belongs to a different assignment")
+
+        submission_mode = getattr(task_type, "submission_mode", None) or "link"
+        if task.integration_kind == "press_release" and submission_mode != "text":
+            raise BadRequestError("Press-release tasks must use text submissions")
+        external_link = data.get("external_link")
+        if isinstance(external_link, str):
+            external_link = external_link.strip() or None
+        content = data.get("content")
+        if isinstance(content, str):
+            content = content.strip() or None
+        if submission_mode == "text":
+            if not content:
+                raise BadRequestError("Pasted content is required for this task type")
+            data["content"] = content
+            data["external_link"] = None
+        else:
+            if not external_link:
+                external_link = await TaskSubmissionService._current_deliverable_link(
+                    db, assignment
+                )
+            if not external_link:
+                raise BadRequestError("A submission link is required for this task type")
+            data["external_link"] = external_link
+            data["content"] = None
 
         version = await TaskSubmissionService.next_submission_version(db, assignment_id)
         if previous_submission:
@@ -398,9 +481,16 @@ class TaskSubmissionService:
         )
 
         record = await EntityRepository(db).create("task_submission", data)
+        if submission_mode != "text" and external_link:
+            await TaskSubmissionService._upsert_task_link(
+                db, task.id, external_link, user.id
+            )
         old_task_status = task.status
-        task.status = "for_review"
-        task.last_modified_by = user.id
+        if transition:
+            await _apply_task_workflow_transition(db, user, task, transition)
+        else:
+            task.status = "for_review"
+            task.last_modified_by = user.id
 
         await AuditLogService.log_event(
             db,
@@ -438,6 +528,66 @@ class TaskSubmissionService:
         await db.commit()
         await db.refresh(record)
         return record
+
+    @staticmethod
+    async def _current_deliverable_link(
+        db: AsyncSession, assignment: TaskAssignment
+    ) -> str | None:
+        """Return the task's current link: latest submission link, else the task link."""
+        latest = await db.scalar(
+            select(TaskSubmission.external_link)
+            .join(TaskAssignment, TaskSubmission.task_assignment_id == TaskAssignment.id)
+            .where(
+                TaskAssignment.task_id == assignment.task_id,
+                TaskSubmission.external_link.is_not(None),
+                TaskSubmission.external_link != "",
+            )
+            .order_by(TaskSubmission.version.desc(), TaskSubmission.submitted_at.desc())
+            .limit(1)
+        )
+        if latest:
+            return latest
+        return await db.scalar(
+            select(TaskLink.url)
+            .where(TaskLink.task_id == assignment.task_id)
+            .order_by(TaskLink.updated_at.desc())
+            .limit(1)
+        )
+
+    @staticmethod
+    async def _upsert_task_link(
+        db: AsyncSession, task_id: str, url: str, user_id: str
+    ) -> TaskLink:
+        """Create or update the task's single current deliverable link."""
+        link = await db.scalar(
+            select(TaskLink)
+            .where(TaskLink.task_id == task_id)
+            .order_by(TaskLink.updated_at.desc(), TaskLink.id.desc())
+            .limit(1)
+        )
+        if link:
+            link.url = url
+            link.last_modified_by = user_id
+            return link
+
+        meta = MetaRegistry.get("task_link")
+        naming_service = NamingAppService(NamingRepository(db))
+        link_id = _id_or_uuid(
+            await naming_service.generate_id(
+                getattr(meta, "naming", None), "task_link"
+            )
+        )
+        return await EntityRepository(db).create(
+            "task_link",
+            {
+                "id": link_id,
+                "task_id": task_id,
+                "url": url,
+                "label": "Submitted deliverable",
+                "created_by": user_id,
+                "last_modified_by": user_id,
+            },
+        )
 
 
 class TaskApprovalService:
@@ -498,9 +648,20 @@ class TaskApprovalService:
         assignment = await db.get(TaskAssignment, submission.task_assignment_id)
         if not assignment:
             raise NotFoundError("Task Assignment", submission.task_assignment_id)
-        task = await db.get(Task, assignment.task_id)
+        task = await db.scalar(
+            select(Task).where(Task.id == assignment.task_id).with_for_update()
+        )
         if not task:
             raise NotFoundError("Task", assignment.task_id)
+
+        review_actions = {
+            "approved": ("approve",),
+            "needs_revision": ("request_changes", "revise"),
+            "rejected": ("reject",),
+        }
+        workflow, transition = await _find_task_transition(
+            db, user, task, review_actions[decision]
+        )
 
         idx = await TaskApprovalService.next_approval_index(db, submission_id)
         meta = MetaRegistry.get("task_approval")
@@ -522,16 +683,38 @@ class TaskApprovalService:
             "last_modified_by": user.id,
         }
         record = await EntityRepository(db).create("task_approval", data)
+        press_payload = None
+        if decision == "approved" and task.integration_kind == "press_release":
+            project = await db.get(Project, task.project_id)
+            if not project:
+                raise NotFoundError("Project", task.project_id)
+            press_payload = press_submission_payload(task, project, submission, record)
+            existing_outbox = await db.scalar(
+                select(BahandiPressOutbox.id).where(
+                    BahandiPressOutbox.source_task_id == task.id
+                )
+            )
+            if not existing_outbox:
+                db.add(
+                    BahandiPressOutbox(
+                        source_task_id=task.id,
+                        source_submission_id=submission.id,
+                        payload=press_payload,
+                    )
+                )
 
         old_submission_status = submission.status
         submission.status = decision
         submission.last_modified_by = user.id
 
         old_task_status = task.status
-        new_task_status = TaskApprovalService._resolve_task_status(decision)
-        if task.status != new_task_status:
-            task.status = new_task_status
-            task.last_modified_by = user.id
+        if transition:
+            await _apply_task_workflow_transition(db, user, task, transition)
+        else:
+            new_task_status = TaskApprovalService._resolve_task_status(decision)
+            if task.status != new_task_status:
+                task.status = new_task_status
+                task.last_modified_by = user.id
 
         if decision == "approved":
             project = await db.get(Project, task.project_id)

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import Base
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import BadRequestError, ForbiddenError
 from app.core.framework.models.auth import EntityPermission, Role, User
 from app.core.security import CurrentUser, get_current_user_from_token
 from app.application.services.access_control.rbac_service import RBACAppService
@@ -102,14 +102,33 @@ async def test_workspace_context_limits_members_and_supervisors():
         )
         await db.commit()
 
-        with pytest.raises(ForbiddenError, match="not assigned"):
-            await WorkspaceService.resolve_context(
+        assert await WorkspaceService.resolve_context(
+            db, member.id, [], False
+        ) == WorkspaceContext((), None)
+        assert await WorkspaceService.resolve_context(
+            db, member.id, [], False, "workspace-bahandi"
+        ) == WorkspaceContext((), None)
+        with pytest.raises(BadRequestError, match="only for supervisors"):
+            await WorkspaceService.assign_membership(
                 db,
-                member.id,
-                [],
-                False,
                 "workspace-bahandi",
+                member.id,
+                "member",
+                True,
+                supervisor.id,
             )
+        additional_supervisor_access = await WorkspaceService.assign_membership(
+            db,
+            "workspace-bahandi",
+            member.id,
+            "supervisor",
+            False,
+            supervisor.id,
+        )
+        assert additional_supervisor_access.is_home is False
+        assert (
+            await WorkspaceService.resolve_context(db, member.id, [], False)
+        ).active_workspace_id == "workspace-bahandi"
 
         selected = await WorkspaceService.resolve_context(
             db,
@@ -139,8 +158,9 @@ async def test_workspace_context_limits_members_and_supervisors():
                 db, str(uuid4()), ["HR"], False, "workspace-bahandi"
             )
         ) == WorkspaceContext((), None)
-        with pytest.raises(ForbiddenError, match="workspace"):
-            await WorkspaceService.resolve_context(db, str(uuid4()), [], False)
+        assert await WorkspaceService.resolve_context(
+            db, str(uuid4()), [], False
+        ) == WorkspaceContext((), None)
         with pytest.raises(ForbiddenError, match="all workspaces"):
             await WorkspaceService.resolve_context(
                 db, member.id, [], False, "all"
@@ -428,6 +448,93 @@ async def test_supervisor_scope_stays_in_assigned_workspace_despite_cross_projec
             )
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_boot_workspace_context_matches_workspace_context_endpoint(
+    client, db_session
+):
+    from app.main import fastapi_app
+
+    await WorkspaceService.seed_defaults(db_session)
+    role = Role(id="boot-member-role", name="BootMember", is_active=True)
+    member = User(
+        id="boot-member",
+        username="boot-member",
+        email="boot-member@example.test",
+        full_name="Boot Member",
+        hashed_password="unused",
+        is_active=True,
+    )
+    member.roles.append(role)
+    db_session.add_all(
+        [
+            member,
+            EntityPermission(
+                id="boot-member-project-permission",
+                role_id=role.id,
+                entity_name="project",
+                can_read=True,
+                can_create=True,
+                in_sidebar=False,
+                row_scope="all",
+            ),
+            WorkspaceMembership(
+                id="boot-member-home",
+                workspace_id="workspace-fourth-street",
+                user_id=member.id,
+                membership_role="supervisor",
+                is_home=True,
+                is_active=True,
+            ),
+            WorkspaceMembership(
+                id="boot-member-secondary",
+                workspace_id="workspace-bahandi",
+                user_id=member.id,
+                membership_role="supervisor",
+                is_home=False,
+                is_active=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async def current_member():
+        return CurrentUser(
+            id=member.id,
+            username=member.username,
+            roles=[role.name],
+            role_ids=[role.id],
+        )
+
+    fastapi_app.dependency_overrides[get_current_user_from_token] = current_member
+    try:
+        boot_response = await client.get("/api/auth/boot")
+        context_response = await client.get("/api/workspaces/context")
+
+        assert boot_response.status_code == 200
+        assert context_response.status_code == 200
+        boot = boot_response.json()
+        context = context_response.json()["data"]
+        assert boot["workspace_context"] == context
+        assert context["active_workspace_id"] == "workspace-fourth-street"
+        assert context["can_manage"] is True
+        assert context["capabilities"]["can_view_global_schedule"] is True
+        assert context["capabilities"]["is_system_admin"] is False
+        assert boot["permissions"]["project"]["can_create"] is True
+        assert all(
+            entity["name"] != "project" for entity in boot["sidebar"]["entities"]
+        )
+
+        headers = {"X-Workspace-ID": "workspace-bahandi"}
+        selected_boot = await client.get("/api/auth/boot", headers=headers)
+        selected_context = await client.get("/api/workspaces/context", headers=headers)
+        assert selected_boot.status_code == 200
+        assert selected_context.status_code == 200
+        assert selected_boot.json()["workspace_context"] == selected_context.json()["data"]
+        assert selected_context.json()["data"]["active_workspace_id"] == "workspace-bahandi"
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user_from_token, None)
 
 
 @pytest.mark.asyncio

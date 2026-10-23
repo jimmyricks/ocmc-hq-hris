@@ -116,24 +116,100 @@ async def _validate_employee_rate(db: AsyncSession, payload: EmployeeRateRequest
         raise BadRequestError("Employee must have an active membership in this workspace")
 
 
+@router.get("/task-types")
+async def list_payroll_task_types(
+    search: str | None = Query(None),
+    workspace_id: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List task-rate records for payroll administrators."""
+    _require_payroll_admin(current_user)
+    query = select(TaskType).outerjoin(Workspace, Workspace.id == TaskType.workspace_id)
+    if workspace_id:
+        query = query.where(TaskType.workspace_id == workspace_id)
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.where(
+            TaskType.name.ilike(pattern)
+            | TaskType.description.ilike(pattern)
+            | Workspace.name.ilike(pattern)
+        )
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+    rows = (
+        await db.scalars(
+            query.order_by(Workspace.name, TaskType.name)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    return {
+        "status": "success",
+        "data": [record_to_dict(row) for row in rows],
+        "total": total or 0,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 @router.get("/rates")
 async def list_employee_rates(
     workspace_id: str | None = None,
     user_id: str | None = None,
     task_type_id: str | None = None,
+    search: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     current_user: CurrentUser = Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
     _require_payroll_admin(current_user)
-    query = select(UserTaskRate)
+    query = (
+        select(UserTaskRate)
+        .outerjoin(User, User.id == UserTaskRate.user_id)
+        .outerjoin(Workspace, Workspace.id == UserTaskRate.workspace_id)
+        .outerjoin(TaskType, TaskType.id == UserTaskRate.task_type_id)
+    )
     if workspace_id:
         query = query.where(UserTaskRate.workspace_id == workspace_id)
     if user_id:
         query = query.where(UserTaskRate.user_id == user_id)
     if task_type_id:
         query = query.where(UserTaskRate.task_type_id == task_type_id)
-    rows = (await db.scalars(query.order_by(UserTaskRate.workspace_id, UserTaskRate.user_id))).all()
-    return {"status": "success", "data": [record_to_dict(row) for row in rows]}
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.where(
+            User.full_name.ilike(pattern)
+            | User.email.ilike(pattern)
+            | Workspace.name.ilike(pattern)
+            | TaskType.name.ilike(pattern)
+        )
+
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+    rows = (
+        await db.scalars(
+            query.order_by(
+                Workspace.name,
+                User.full_name,
+                TaskType.name,
+            )
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    return {
+        "status": "success",
+        "data": [record_to_dict(row) for row in rows],
+        "total": total or 0,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/rate-options")
@@ -467,6 +543,66 @@ async def create_payroll_period(
     )
 
 
+@router.get("/periods/{period_id}")
+async def get_payroll_period(
+    period_id: str,
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_payroll_admin(current_user)
+    period = await db.get(PayrollPeriod, period_id)
+    if not period:
+        raise NotFoundError("Payroll Period", period_id)
+    return {"status": "success", "data": record_to_dict(period)}
+
+
+@router.get("/periods/{period_id}/entries")
+async def list_payroll_period_entries(
+    period_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_payroll_admin(current_user)
+    if not await db.get(PayrollPeriod, period_id):
+        raise NotFoundError("Payroll Period", period_id)
+    query = select(PayrollEntry).where(
+        PayrollEntry.payroll_period_id == period_id
+    )
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+    entries = (
+        await db.scalars(
+            query.order_by(PayrollEntry.user_id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    return {
+        "status": "success",
+        "data": [record_to_dict(entry) for entry in entries],
+        "total": total or 0,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/periods/{period_id}/entries/{entry_id}")
+async def get_payroll_period_entry(
+    period_id: str,
+    entry_id: str,
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_payroll_admin(current_user)
+    entry = await db.get(PayrollEntry, entry_id)
+    if not entry or entry.payroll_period_id != period_id:
+        raise NotFoundError("Payroll Entry", entry_id)
+    return {"status": "success", "data": record_to_dict(entry)}
+
+
 @router.post("/periods/generate")
 async def generate_payroll(
     payload: GeneratePayrollRequest,
@@ -482,6 +618,89 @@ async def generate_payroll(
         message=f"Generated {len(records)} payroll entries",
         data={"count": len(records), "entries": [record_to_dict(r) for r in records]},
     )
+
+
+@router.get("/my-invoices")
+async def list_my_payroll_invoices(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    current_user: CurrentUser = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(Invoice, PayrollPeriod)
+        .outerjoin(PayrollPeriod, PayrollPeriod.id == Invoice.payroll_period_id)
+        .where(
+            Invoice.user_id == current_user.id,
+            Invoice.status.in_(["issued", "paid"]),
+        )
+    )
+    total = await db.scalar(
+        select(func.count())
+        .select_from(Invoice)
+        .where(
+            Invoice.user_id == current_user.id,
+            Invoice.status.in_(["issued", "paid"]),
+        )
+    )
+    rows = (
+        await db.execute(
+            query.order_by(Invoice.issued_at.desc(), Invoice.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    entry_ids = [invoice.payroll_entry_id for invoice, _ in rows]
+    line_items_by_entry: dict[str, list[dict]] = {entry_id: [] for entry_id in entry_ids}
+    if entry_ids:
+        line_rows = (
+            await db.execute(
+                select(
+                    PayrollLineItem,
+                    Task.title,
+                    TaskType.name,
+                    TaskSubmission.notes,
+                )
+                .join(
+                    TaskSubmission,
+                    TaskSubmission.id == PayrollLineItem.task_submission_id,
+                )
+                .join(
+                    TaskAssignment,
+                    TaskAssignment.id == TaskSubmission.task_assignment_id,
+                )
+                .join(Task, Task.id == TaskAssignment.task_id)
+                .outerjoin(TaskType, TaskType.id == Task.task_type_id)
+                .where(PayrollLineItem.payroll_entry_id.in_(entry_ids))
+                .order_by(PayrollLineItem.payroll_entry_id, PayrollLineItem.idx)
+            )
+        ).all()
+        for line, task_title, task_type_name, notes in line_rows:
+            line_items_by_entry[line.payroll_entry_id].append(
+                {
+                    **record_to_dict(line),
+                    "task_title": task_title,
+                    "task_type_name": task_type_name,
+                    "submission_notes": notes,
+                }
+            )
+
+    return {
+        "status": "success",
+        "data": [
+            {
+                **record_to_dict(invoice),
+                "period_label": period.label if period else invoice.payroll_period_id,
+                "period_start_date": period.start_date if period else None,
+                "period_end_date": period.end_date if period else None,
+                "line_items": line_items_by_entry.get(invoice.payroll_entry_id, []),
+            }
+            for invoice, period in rows
+        ],
+        "total": total or 0,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.post("/entries/{payroll_entry_id}/approve")

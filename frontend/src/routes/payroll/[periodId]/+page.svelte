@@ -5,18 +5,14 @@
   import { toast } from "$lib/notifications";
   import { payrollApi } from "$lib/payroll/api.js";
   import { taskApi } from "$lib/task-manager/api.js";
-  import type {
-    PayrollEntry,
-    PayrollPeriod,
-    PayrollSettings,
-  } from "$lib/payroll/types.js";
+  import type { PayrollEntry, PayrollPeriod } from "$lib/payroll/types.js";
   import type { User } from "$lib/task-manager/types.js";
   import { getToken } from "$lib/auth";
   import { OFFICIAL_CURRENCY } from "$lib/constants.js";
 
   import * as Card from "$lib/components/ui/card/index.js";
   import * as Empty from "$lib/components/ui/empty/index.js";
-  import * as Item from "$lib/components/ui/item/index.js";
+
   import * as Stats from "$lib/components/ui/stat/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
@@ -35,9 +31,6 @@
   let period = $state<PayrollPeriod | null>(null);
   let entries = $state<PayrollEntry[]>([]);
   let users = $state<User[]>([]);
-  let settings = $state<PayrollSettings>({
-    currency: OFFICIAL_CURRENCY,
-  } as PayrollSettings);
   let loading = $state(true);
   let entriesLoading = $state(true);
   let error = $state("");
@@ -106,36 +99,44 @@
       .getUsers()
       .then((u) => (users = u))
       .catch(() => {});
-    payrollApi
-      .getSettings()
-      .then((s) => {
-        if (s) settings = s;
-      })
-      .catch(() => {});
-    loadPeriod();
-    loadEntries();
   });
 
-  async function loadPeriod() {
+  $effect(() => {
+    const currentPeriodId = periodId;
+    if (!browser || !getToken() || !currentPeriodId) return;
+    period = null;
+    entries = [];
+    void loadPeriod(currentPeriodId);
+    void loadEntries(currentPeriodId);
+  });
+
+  async function loadPeriod(currentPeriodId: string) {
     try {
-      const periods = await payrollApi.getPeriods();
-      period = periods.find((p) => p.id === periodId) ?? null;
+      const result = await payrollApi.getPeriod(currentPeriodId);
+      if (page.params.periodId === currentPeriodId) period = result;
     } catch (err: any) {
-      error = err.message || "Failed to load period";
+      if (page.params.periodId === currentPeriodId) {
+        error = err.message || "Failed to load period";
+      }
     }
   }
 
-  async function loadEntries() {
+  async function loadEntries(currentPeriodId: string) {
     loading = true;
     entriesLoading = true;
     error = "";
     try {
-      entries = await payrollApi.getEntriesForPeriod(periodId);
+      const result = await payrollApi.getEntriesForPeriod(currentPeriodId);
+      if (page.params.periodId === currentPeriodId) entries = result;
     } catch (err: any) {
-      error = err.message || "Failed to load payroll entries";
+      if (page.params.periodId === currentPeriodId) {
+        error = err.message || "Failed to load payroll entries";
+      }
     } finally {
-      loading = false;
-      entriesLoading = false;
+      if (page.params.periodId === currentPeriodId) {
+        loading = false;
+        entriesLoading = false;
+      }
     }
   }
 
@@ -143,17 +144,15 @@
     if (!period) return;
     if (
       !confirm(
-        `Generate payroll for "${period.label}"? This will auto-close all approved tasks in the period.`,
+        `Generate payroll for "${period.label}"? This includes approved tasks completed during this period.`,
       )
     )
       return;
     try {
       const result = await payrollApi.generate(period.id);
-      toast.success(
-        `Generated ${result.count} payroll entries. Approved tasks have been closed.`,
-      );
-      await loadEntries();
-      await loadPeriod();
+      toast.success(`Generated ${result.count} payroll entries.`);
+      await loadEntries(period.id);
+      await loadPeriod(period.id);
     } catch (err: any) {
       toast.error(err.message || "Failed to generate payroll");
     }
@@ -180,9 +179,7 @@
 
   <!-- Period header + generate button -->
   {#if period}
-    <div
-      class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
-    >
+    <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <div class="flex items-center gap-2">
           <h1 class="text-2xl font-bold tracking-tight">{period.label}</h1>
@@ -190,11 +187,9 @@
             {PERIOD_STATUS_META[period.status]?.label}
           </Badge>
         </div>
-        <p class="text-sm text-base-content/60">
-          {formatDate(period.start_date)} → {formatDate(period.end_date)}
-          {#if period.cutoff && period.cutoff !== period.end_date}
-            · Cutoff: {formatDate(period.cutoff)}
-          {/if}
+        <p class="mt-1 text-sm text-base-content/60">
+          Done date window: {formatDate(period.start_date)} →
+          {formatDate(period.end_date)} (inclusive)
         </p>
       </div>
       <Button
@@ -231,7 +226,9 @@
           ><DollarSignIcon class="size-6" /></Stats.Figure
         >
         <Stats.Title>Period Total</Stats.Title>
-        <Stats.Value class="tabular-nums">{formatCurrency(periodTotal())}</Stats.Value>
+        <Stats.Value class="tabular-nums"
+          >{formatCurrency(periodTotal())}</Stats.Value
+        >
       </Stats.Item>
     </Stats.Root>
   {:else if loading}
@@ -240,20 +237,18 @@
 
   <!-- Per-user entries list -->
   {#if entriesLoading}
-    <Item.Group>
+    <ul class="list w-full rounded-box bg-base-100 shadow-md">
       {#each Array.from({ length: 3 }) as _, i (i)}
-        <Item.Root variant="outline">
-          <Item.Media variant="image"
-            ><Skeleton class="size-10 rounded-xl" /></Item.Media
-          >
-          <Item.Content>
-            <Item.Title><Skeleton class="h-4 w-32" /></Item.Title>
-            <Item.Description><Skeleton class="h-3 w-20" /></Item.Description>
-          </Item.Content>
-          <Item.Actions><Skeleton class="h-6 w-16" /></Item.Actions>
-        </Item.Root>
+        <li class="list-row items-center">
+          <div><Skeleton class="size-10 rounded-xl" /></div>
+          <div>
+            <Skeleton class="h-4 w-32" />
+            <Skeleton class="mt-1 h-3 w-20" />
+          </div>
+          <Skeleton class="h-6 w-16" />
+        </li>
       {/each}
-    </Item.Group>
+    </ul>
   {:else if entries.length === 0}
     <Card.Root>
       <Card.Content class="pt-6">
@@ -262,45 +257,46 @@
           <Empty.Header>
             <Empty.Title>No payroll entries</Empty.Title>
             <Empty.Description>
-              Click "Generate Payroll" to scan approved submissions and create
-              entries per user.
+              Generate payroll to include approved tasks moved to Done during
+              this cutoff.
             </Empty.Description>
           </Empty.Header>
         </Empty.Root>
       </Card.Content>
     </Card.Root>
   {:else}
-    <Item.Group>
+    <ul class="list w-full rounded-box bg-base-100 shadow-md">
       {#each entries as entry (entry.id)}
         {@const es = ENTRY_STATUS_META[entry.status] ?? ENTRY_STATUS_META.draft}
-        <Item.Root variant="outline">
-          {#snippet child({ props })}
-            <a href={`/payroll/${periodId}/${entry.id}`} {...props}>
-              <Item.Media variant="image">
-                <Avatar.Root class="size-full">
-                  <Avatar.Fallback class="text-xs"
-                    >{userInitials(entry.user_id)}</Avatar.Fallback
-                  >
-                </Avatar.Root>
-              </Item.Media>
-              <Item.Content>
-                <Item.Title>{userName(entry.user_id)}</Item.Title>
-                <Item.Description>
-                  {entry.total_tasks ?? 0}
-                  {(entry.total_tasks ?? 0) === 1 ? "task" : "tasks"}
-                </Item.Description>
-              </Item.Content>
-              <Item.Actions>
-                <span class="text-lg font-bold tabular-nums"
-                  >{formatCurrency(entry.total_amount)}</span
+        <li>
+          <a
+            class="list-row items-center"
+            href={`/payroll/${periodId}/${entry.id}`}
+          >
+            <div>
+              <Avatar.Root class="size-10">
+                <Avatar.Fallback class="text-xs"
+                  >{userInitials(entry.user_id)}</Avatar.Fallback
                 >
-                <Badge variant={es.variant}>{es.label}</Badge>
-                <ChevronRightIcon class="size-4 text-base-content/60" />
-              </Item.Actions>
-            </a>
-          {/snippet}
-        </Item.Root>
+              </Avatar.Root>
+            </div>
+            <div>
+              <div class="font-medium">{userName(entry.user_id)}</div>
+              <div class="text-xs opacity-60">
+                {entry.total_tasks ?? 0}
+                {(entry.total_tasks ?? 0) === 1 ? "task" : "tasks"}
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-lg font-bold tabular-nums"
+                >{formatCurrency(entry.total_amount)}</span
+              >
+              <Badge variant={es.variant}>{es.label}</Badge>
+              <ChevronRightIcon class="size-4 text-base-content/60" />
+            </div>
+          </a>
+        </li>
       {/each}
-    </Item.Group>
+    </ul>
   {/if}
 </div>

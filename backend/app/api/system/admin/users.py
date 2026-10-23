@@ -4,7 +4,7 @@ Users Router
 User management endpoints.
 """
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -148,33 +148,38 @@ async def get_user_metadata(current_user: CurrentUser = Depends(get_current_user
 
 @router.get("/users")
 async def list_users(
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(0, ge=0),
+    limit: int | None = Query(None, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     search: str = None,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user_from_token)
 ):
-    """List all users with their roles and pagination."""
+    """List users with their roles and pagination."""
     if not is_system_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Access denied: Superuser required")
-    
-    query = select(User).options(selectinload(User.roles))
-    
+
+    effective_limit = limit or page_size
+    effective_skip = skip if limit is not None else (page - 1) * page_size
+
+    query = select(User).options(selectinload(User.roles)).order_by(User.full_name, User.username)
+
     if search:
         query = query.where(
             User.username.ilike(f"%{search}%") |
             User.email.ilike(f"%{search}%") |
             User.full_name.ilike(f"%{search}%")
         )
-    
-    count_query = select(func.count()).select_from(query.subquery())
+
+    count_query = select(func.count()).select_from(query.order_by(None).subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar()
-    
-    query = query.offset(skip).limit(limit)
+
+    query = query.offset(effective_skip).limit(effective_limit)
     result = await db.execute(query)
     users = result.scalars().all()
-    
+
     return api_response(
         status="success",
         message="Users retrieved successfully",
@@ -198,8 +203,10 @@ async def list_users(
                 for u in users
             ],
             "total": total,
-            "skip": skip,
-            "limit": limit
+            "page": page,
+            "page_size": effective_limit,
+            "skip": effective_skip,
+            "limit": effective_limit
         }
     )
 

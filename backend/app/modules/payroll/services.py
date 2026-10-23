@@ -17,8 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services.documents.naming_service import NamingAppService
 from app.application.services.entity_service import EntityService
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.constants import OFFICIAL_CURRENCY
+from app.core.framework.models.infrastructure import WorkflowLedger
 from app.core.serialization import record_to_dict
 from app.infrastructure.database.repositories.entity_repository import EntityRepository, get_entity_model
 from app.infrastructure.database.repositories.naming_repository import NamingRepository
@@ -67,10 +68,7 @@ class PayrollService:
     ) -> PayrollPeriod:
         """Create a payroll period after validating the date range.
 
-        Real-world rules:
-        - ``start_date`` must be before ``end_date``.
-        - ``cutoff`` must fall on or before ``end_date``.
-        - The label is auto-generated when missing.
+        Periods are the 1st–14th and 15th–month-end halves of one month.
         """
         start_date = data.get("start_date")
         end_date = data.get("end_date")
@@ -79,12 +77,21 @@ class PayrollService:
 
         if not start_date or not end_date:
             raise BadRequestError("start_date and end_date are required")
-        if start_date > end_date:
-            raise BadRequestError("start_date must be before end_date")
-        if cutoff and cutoff > end_date:
-            raise BadRequestError("cutoff must be on or before end_date")
-        if cutoff and cutoff < start_date:
-            raise BadRequestError("cutoff must be on or after start_date")
+        if period_type != "bi_monthly":
+            raise BadRequestError("Payroll periods must use the bi-monthly schedule")
+        if cutoff and cutoff != end_date:
+            raise BadRequestError("cutoff must match the payroll period end date")
+        PayrollService._validate_period_range(start_date, end_date)
+        overlap = await db.scalar(
+            select(func.count())
+            .select_from(PayrollPeriod)
+            .where(
+                PayrollPeriod.start_date <= end_date,
+                PayrollPeriod.end_date >= start_date,
+            )
+        )
+        if overlap:
+            raise ConflictError("A payroll period already covers some or all of these dates")
 
         label = data.get("label")
         if not label:
@@ -133,9 +140,9 @@ class PayrollService:
     ) -> list[PayrollEntry]:
         """Generate payroll entries and line items for a period.
 
-        Period membership is based on the submission timestamp, inclusively from
-        start_date through cutoff (or end_date if no cutoff was stored). Approved
-        snapshots are authoritative; old approvals without snapshots need review.
+        Period membership uses the recorded transition into Done. Approved
+        snapshots remain authoritative; legacy work without a transition date
+        or pay snapshot must be reviewed rather than assigned to a period by guess.
         """
         period = await db.scalar(
             select(PayrollPeriod)
@@ -144,6 +151,8 @@ class PayrollService:
         )
         if not period:
             raise NotFoundError("Payroll Period", payroll_period_id)
+        if period.cutoff and period.cutoff != period.end_date:
+            raise BadRequestError("Payroll period cutoff must match its end date")
         if period.status == "paid":
             raise BadRequestError("Cannot generate payroll for a paid period")
 
@@ -161,11 +170,59 @@ class PayrollService:
             )
 
         start_dt = datetime.combine(period.start_date, datetime.min.time())
-        cutoff_date = period.cutoff or period.end_date
-        end_dt = datetime.combine(cutoff_date, datetime.max.time())
+        end_exclusive = datetime.combine(
+            date.fromordinal(period.end_date.toordinal() + 1),
+            datetime.min.time(),
+        )
+        done_transitions = (
+            select(
+                WorkflowLedger.record_id.label("task_id"),
+                func.max(WorkflowLedger.changed_at).label("done_at"),
+            )
+            .where(
+                WorkflowLedger.entity_type == "task",
+                WorkflowLedger.previous_state == "approved",
+                WorkflowLedger.next_state == "done",
+            )
+            .group_by(WorkflowLedger.record_id)
+            .subquery()
+        )
+        has_done_transition = select(WorkflowLedger.id).where(
+            WorkflowLedger.entity_type == "task",
+            WorkflowLedger.record_id == Task.id,
+            WorkflowLedger.previous_state == "approved",
+            WorkflowLedger.next_state == "done",
+        ).exists()
+        missing_done_dates = (
+            await db.scalars(
+                select(Task.id)
+                .join(TaskAssignment, TaskAssignment.task_id == Task.id)
+                .join(
+                    TaskSubmission,
+                    TaskSubmission.task_assignment_id == TaskAssignment.id,
+                )
+                .where(
+                    Task.status == "done",
+                    TaskSubmission.status == "approved",
+                    ~has_done_transition,
+                )
+                .limit(5)
+            )
+        ).all()
+        if missing_done_dates:
+            raise BadRequestError(
+                "Approved Done tasks without a recorded Done date need manual review: "
+                + ", ".join(missing_done_dates)
+            )
 
         submissions_result = await db.execute(
-            select(TaskSubmission, TaskAssignment, Task, TaskType, Project.workspace_id)
+            select(
+                TaskSubmission,
+                TaskAssignment,
+                TaskType,
+                Project.workspace_id,
+                done_transitions.c.done_at,
+            )
             .join(
                 TaskAssignment,
                 TaskSubmission.task_assignment_id == TaskAssignment.id,
@@ -173,20 +230,22 @@ class PayrollService:
             .join(Task, TaskAssignment.task_id == Task.id)
             .join(Project, Project.id == Task.project_id)
             .outerjoin(TaskType, Task.task_type_id == TaskType.id)
+            .join(done_transitions, done_transitions.c.task_id == Task.id)
             .where(
                 TaskSubmission.status == "approved",
-                TaskSubmission.submitted_at >= start_dt,
-                TaskSubmission.submitted_at <= end_dt,
+                Task.status == "done",
+                done_transitions.c.done_at >= start_dt,
+                done_transitions.c.done_at < end_exclusive,
             )
-            .order_by(TaskSubmission.submitted_at)
+            .order_by(done_transitions.c.done_at, TaskSubmission.id)
         )
         submission_rows = submissions_result.all()
 
         # Group snapshots by assignee. Never resolve current rates during payroll.
         by_user: dict[
-            str, list[tuple[TaskSubmission, Task, str | None, Decimal, Decimal, Decimal]]
+            str, list[tuple[TaskSubmission, str | None, Decimal, Decimal, Decimal]]
         ] = {}
-        for submission, assignment, task, task_type, workspace_id in submission_rows:
+        for submission, assignment, task_type, workspace_id, _done_at in submission_rows:
             if not workspace_id or not task_type or task_type.workspace_id != workspace_id:
                 raise BadRequestError(
                     "Approved work has unmapped or cross-workspace project/task-type data"
@@ -212,8 +271,33 @@ class PayrollService:
                     f"Approved submission {submission.id} has an inconsistent pay snapshot"
                 )
             by_user.setdefault(assignment.user_id, []).append(
-                (submission, task, workspace_id, rate, quantity, amount)
+                (submission, workspace_id, rate, quantity, amount)
             )
+
+        submission_ids = {
+            submission.id
+            for user_submissions in by_user.values()
+            for submission, *_ in user_submissions
+        }
+        if submission_ids:
+            duplicate_ids = (
+                await db.scalars(
+                    select(PayrollLineItem.task_submission_id)
+                    .join(
+                        PayrollEntry,
+                        PayrollEntry.id == PayrollLineItem.payroll_entry_id,
+                    )
+                    .where(
+                        PayrollLineItem.task_submission_id.in_(submission_ids),
+                        PayrollEntry.payroll_period_id != payroll_period_id,
+                    )
+                )
+            ).all()
+            if duplicate_ids:
+                raise BadRequestError(
+                    "Approved work is already included in another payroll period: "
+                    + ", ".join(sorted(set(duplicate_ids)))
+                )
 
         # Remove existing draft/under_review entries for this period before regenerating
         old_entries_result = await db.execute(
@@ -261,7 +345,7 @@ class PayrollService:
             entry = await EntityRepository(db).create("payroll_entry", entry_data)
 
             total = Decimal("0.00")
-            for idx, (submission, task, workspace_id, rate, quantity, amount) in enumerate(
+            for idx, (submission, workspace_id, rate, quantity, amount) in enumerate(
                 user_submissions, start=1
             ):
                 total += amount
@@ -283,21 +367,6 @@ class PayrollService:
                         last_modified_by=user.id,
                     )
                 )
-
-                # Auto-close the approved task to preserve data integrity
-                if task and task.status == "approved":
-                    old_task_status = task.status
-                    task.status = "closed"
-                    task.last_modified_by = user.id
-                    await AuditLogService.log_event(
-                        db,
-                        entity="task",
-                        record_id=task.id,
-                        action="update",
-                        actor_id=user.id,
-                        old_values={"status": old_task_status},
-                        new_values={"status": "closed", "reason": "auto-closed by payroll generation"},
-                    )
 
             entry.total_amount = _money(total)
             entry.last_modified_by = user.id
@@ -342,6 +411,20 @@ class PayrollService:
             raise NotFoundError("Payroll Entry", payroll_entry_id)
         if entry.status not in {"draft", "under_review"}:
             raise BadRequestError("Payroll entry cannot be approved from its current status")
+        period = await db.get(PayrollPeriod, entry.payroll_period_id)
+        line_total = await db.scalar(
+            select(func.coalesce(func.sum(PayrollLineItem.amount), 0)).where(
+                PayrollLineItem.payroll_entry_id == entry.id
+            )
+        )
+        total = _money(line_total)
+        if total != _money(entry.total_amount or 0):
+            raise BadRequestError(
+                "Payroll entry total does not match its line items; reconcile before approval"
+            )
+        invoice = await PayrollService._ensure_invoice(
+            db, user, entry, period, total, status="issued"
+        )
 
         old_status = entry.status
         entry.status = "approved"
@@ -357,6 +440,18 @@ class PayrollService:
             actor_id=user.id,
             old_values={"status": old_status},
             new_values={"status": entry.status, "approved_by": user.id},
+        )
+        await NotificationService.create_notification(
+            db,
+            user_id=entry.user_id,
+            reference_entity="invoice",
+            reference_id=invoice.id,
+            type="payroll_invoice_issued",
+            message=(
+                f"Invoice {invoice.invoice_number} for {total} is available "
+                f"for {period.label if period else entry.payroll_period_id}."
+            ),
+            actor_id=user.id,
         )
         await db.commit()
         return entry
@@ -388,55 +483,11 @@ class PayrollService:
                 "Payroll entry total does not match its line items; reconcile before payment"
             )
 
-        naming_service = NamingAppService(NamingRepository(db))
-
-        existing_invoice = await db.scalar(
-            select(Invoice).where(Invoice.payroll_entry_id == entry.id)
+        invoice = await PayrollService._ensure_invoice(
+            db, user, entry, period, total, status="issued"
         )
-        if existing_invoice:
-            if (
-                existing_invoice.user_id != entry.user_id
-                or _money(existing_invoice.total_amount or 0) != total
-            ):
-                raise BadRequestError(
-                    "An existing invoice does not reconcile with this payroll entry"
-                )
-        else:
-            invoice_meta = MetaRegistry.get("invoice")
-            invoice_id = _id_or_uuid(
-                await naming_service.generate_id(invoice_meta.naming, "invoice")
-            )
-            invoice_number = (
-                f"INV-{period.label.replace(' ', '-').upper()}-{entry.user_id[-6:]}"
-                if period
-                else f"INV-{entry.id[-8:]}"
-            )
-            invoice = Invoice(
-                id=invoice_id,
-                payroll_entry_id=entry.id,
-                payroll_period_id=entry.payroll_period_id,
-                user_id=entry.user_id,
-                invoice_number=invoice_number,
-                total_tasks=entry.total_tasks or 0,
-                total_amount=total,
-                currency=OFFICIAL_CURRENCY,
-                status="paid",
-                issued_at=datetime.utcnow(),
-                paid_at=datetime.utcnow(),
-                created_by=user.id,
-                last_modified_by=user.id,
-            )
-            db.add(invoice)
-            await db.flush()
-            await AuditLogService.log_event(
-                db,
-                entity="invoice",
-                record_id=invoice.id,
-                action="create",
-                actor_id=user.id,
-                old_values=None,
-                new_values=record_to_dict(invoice),
-            )
+        if invoice.status != "issued":
+            raise BadRequestError("Only an issued invoice can be paid")
 
         from app.modules.collaboration_audit.models import Ledger
 
@@ -466,7 +517,19 @@ class PayrollService:
         old_status = entry.status
         entry.status = "paid"
         entry.last_modified_by = user.id
+        invoice.status = "paid"
+        invoice.paid_at = datetime.utcnow()
+        invoice.last_modified_by = user.id
 
+        await AuditLogService.log_event(
+            db,
+            entity="invoice",
+            record_id=invoice.id,
+            action="update",
+            actor_id=user.id,
+            old_values={"status": "issued", "paid_at": None},
+            new_values={"status": "paid", "paid_at": invoice.paid_at},
+        )
         await AuditLogService.log_event(
             db,
             entity="payroll_entry",
@@ -504,6 +567,66 @@ class PayrollService:
         await db.commit()
         await db.refresh(entry)
         return entry
+
+    @staticmethod
+    async def _ensure_invoice(
+        db: AsyncSession,
+        user: Any,
+        entry: PayrollEntry,
+        period: PayrollPeriod | None,
+        total: Decimal,
+        status: str,
+    ) -> Invoice:
+        invoice = await db.scalar(
+            select(Invoice)
+            .where(Invoice.payroll_entry_id == entry.id)
+            .with_for_update()
+        )
+        if invoice:
+            if (
+                invoice.user_id != entry.user_id
+                or invoice.payroll_period_id != entry.payroll_period_id
+                or _money(invoice.total_amount or 0) != total
+            ):
+                raise BadRequestError(
+                    "An existing invoice does not reconcile with this payroll entry"
+                )
+            if invoice.status != "issued":
+                raise BadRequestError("Payroll invoice must be issued before approval or payment")
+            return invoice
+
+        naming_service = NamingAppService(NamingRepository(db))
+        invoice_meta = MetaRegistry.get("invoice")
+        invoice_id = _id_or_uuid(
+            await naming_service.generate_id(invoice_meta.naming, "invoice")
+        )
+        label = period.label if period else entry.payroll_period_id
+        invoice = Invoice(
+            id=invoice_id,
+            payroll_entry_id=entry.id,
+            payroll_period_id=entry.payroll_period_id,
+            user_id=entry.user_id,
+            invoice_number=f"INV-{label.replace(' ', '-').upper()}-{entry.user_id[-6:]}",
+            total_tasks=entry.total_tasks or 0,
+            total_amount=total,
+            currency=OFFICIAL_CURRENCY,
+            status=status,
+            issued_at=datetime.utcnow(),
+            created_by=user.id,
+            last_modified_by=user.id,
+        )
+        db.add(invoice)
+        await db.flush()
+        await AuditLogService.log_event(
+            db,
+            entity="invoice",
+            record_id=invoice.id,
+            action="create",
+            actor_id=user.id,
+            old_values=None,
+            new_values=record_to_dict(invoice),
+        )
+        return invoice
 
     @staticmethod
     async def resolve_rate(
@@ -553,16 +676,32 @@ class PayrollService:
 
     @staticmethod
     def bi_monthly_periods(year: int, month: int) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Return the first-half and second-half bi-monthly periods for a month."""
+        """Return the 1–14 and 15–month-end periods for a month."""
         _, last_day = monthrange(year, month)
         first = {
             "start_date": date(year, month, 1),
-            "end_date": date(year, month, 15),
-            "cutoff": date(year, month, 15),
+            "end_date": date(year, month, 14),
+            "cutoff": date(year, month, 14),
         }
         second = {
-            "start_date": date(year, month, 16),
+            "start_date": date(year, month, 15),
             "end_date": date(year, month, last_day),
             "cutoff": date(year, month, last_day),
         }
         return first, second
+
+    @staticmethod
+    def _validate_period_range(start_date: date, end_date: date) -> None:
+        if start_date > end_date:
+            raise BadRequestError("start_date must be on or before end_date")
+        first, second = PayrollService.bi_monthly_periods(
+            start_date.year, start_date.month
+        )
+        valid_ranges = {
+            (first["start_date"], first["end_date"]),
+            (second["start_date"], second["end_date"]),
+        }
+        if (start_date, end_date) not in valid_ranges:
+            raise BadRequestError(
+                "Payroll periods must cover either days 1–14 or day 15 through month-end"
+            )

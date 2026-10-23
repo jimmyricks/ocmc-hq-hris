@@ -1,7 +1,17 @@
-import { apiJSON, listEntity, listFiltered, getEntityRecord } from '$lib/api/index.js';
+import {
+	apiJSON,
+	listEntity,
+	listFiltered,
+	listFilteredPage,
+	getEntityRecord,
+	toPaginatedResult,
+	type PaginatedResult,
+} from '$lib/api/index.js';
+import type { TaskType } from '$lib/task-manager/types.js';
 import type {
 	EmployeeRateOptions,
 	PayrollEntry,
+	PayrollInvoice,
 	PayrollLineItem,
 	PayrollPeriod,
 	PayrollSettings,
@@ -10,8 +20,30 @@ import type {
 
 export const payrollApi = {
 	async getEmployeeRates(): Promise<UserTaskRate[]> {
-		const res = await apiJSON('/api/payroll/rates');
+		const res = await apiJSON('/api/payroll/rates?page=1&page_size=200');
 		return (res.data ?? []) as UserTaskRate[];
+	},
+
+	async getEmployeeRatesPage(
+		page = 1,
+		pageSize = 50,
+		search = '',
+	): Promise<PaginatedResult<UserTaskRate>> {
+		const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+		if (search.trim()) params.set('search', search.trim());
+		const res = await apiJSON(`/api/payroll/rates?${params}`);
+		return toPaginatedResult<UserTaskRate>(res, page, pageSize);
+	},
+
+	async getTaskTypesPage(
+		page = 1,
+		pageSize = 50,
+		search = '',
+	): Promise<PaginatedResult<TaskType>> {
+		const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+		if (search.trim()) params.set('search', search.trim());
+		const res = await apiJSON(`/api/payroll/task-types?${params}`);
+		return toPaginatedResult<TaskType>(res, page, pageSize);
 	},
 
 	async getEmployeeRateOptions(workspaceId?: string): Promise<EmployeeRateOptions> {
@@ -48,16 +80,73 @@ export const payrollApi = {
 		return res.data;
 	},
 
+	async getMyInvoicesPage(
+		page = 1,
+		pageSize = 25,
+	): Promise<PaginatedResult<PayrollInvoice>> {
+		const params = new URLSearchParams({
+			page: String(page),
+			page_size: String(pageSize),
+		});
+		const response = await apiJSON(`/api/payroll/my-invoices?${params}`);
+		return toPaginatedResult<PayrollInvoice>(response, page, pageSize);
+	},
+
 	async getPeriods(): Promise<PayrollPeriod[]> {
-		const res = await listEntity('payroll_period', 1, 100);
-		return (res.data ?? []) as PayrollPeriod[];
+		const firstPage = await this.getPeriodsPage(1, 100);
+		const pages = await Promise.all(
+			Array.from(
+				{ length: Math.max(0, Math.ceil(firstPage.total / firstPage.page_size) - 1) },
+				(_, index) => this.getPeriodsPage(index + 2, 100),
+			),
+		);
+		return [...firstPage.items, ...pages.flatMap((page) => page.items)];
+	},
+
+	async getPeriodsPage(page = 1, pageSize = 50): Promise<PaginatedResult<PayrollPeriod>> {
+		const res = await listFilteredPage<PayrollPeriod>('payroll_period', [], page, pageSize, {
+			sortField: 'start_date',
+			sortOrder: 'desc',
+		});
+		return res;
+	},
+
+	async getPeriod(periodId: string): Promise<PayrollPeriod> {
+		const res = await apiJSON(`/api/payroll/periods/${encodeURIComponent(periodId)}`);
+		return res.data as PayrollPeriod;
 	},
 
 	async getEntriesForPeriod(periodId: string): Promise<PayrollEntry[]> {
-		const res = await listFiltered('payroll_entry', [
-			{ field: 'payroll_period_id', op: 'eq', value: periodId },
-		], 1, 100);
-		return (res.data ?? []) as PayrollEntry[];
+		const firstPage = await this.getEntriesForPeriodPage(periodId, 1, 100);
+		const pages = await Promise.all(
+			Array.from(
+				{ length: Math.max(0, Math.ceil(firstPage.total / firstPage.page_size) - 1) },
+				(_, index) => this.getEntriesForPeriodPage(periodId, index + 2, 100),
+			),
+		);
+		return [...firstPage.items, ...pages.flatMap((page) => page.items)];
+	},
+
+	async getEntriesForPeriodPage(
+		periodId: string,
+		page = 1,
+		pageSize = 50,
+	): Promise<PaginatedResult<PayrollEntry>> {
+		const params = new URLSearchParams({
+			page: String(page),
+			page_size: String(pageSize),
+		});
+		const response = await apiJSON(
+			`/api/payroll/periods/${encodeURIComponent(periodId)}/entries?${params}`,
+		);
+		return toPaginatedResult<PayrollEntry>(response, page, pageSize);
+	},
+
+	async getEntryForPeriod(periodId: string, entryId: string): Promise<PayrollEntry> {
+		const response = await apiJSON(
+			`/api/payroll/periods/${encodeURIComponent(periodId)}/entries/${encodeURIComponent(entryId)}`,
+		);
+		return response.data as PayrollEntry;
 	},
 
 	async getLineItemsForEntry(entryId: string): Promise<PayrollLineItem[]> {
@@ -65,6 +154,20 @@ export const payrollApi = {
 			{ field: 'payroll_entry_id', op: 'eq', value: entryId },
 		], 1, 100);
 		return (res.data ?? []) as PayrollLineItem[];
+	},
+
+	async getLineItemsForEntryPage(
+		entryId: string,
+		page = 1,
+		pageSize = 25,
+	): Promise<PaginatedResult<PayrollLineItem>> {
+		return listFilteredPage<PayrollLineItem>(
+			'payroll_line_item',
+			[{ field: 'payroll_entry_id', op: 'eq', value: entryId }],
+			page,
+			pageSize,
+			{ sortField: 'idx', sortOrder: 'asc' },
+		);
 	},
 
 	async getSettings(): Promise<PayrollSettings | null> {
@@ -84,26 +187,29 @@ export const payrollApi = {
 	 * Fetch task submission + its parent task for a line item,
 	 * so the breakdown can show the task title alongside the rate.
 	 */
-	async getLineItemTaskInfo(submissionId: string): Promise<{ taskTitle: string; taskKey?: string; taskTypeName?: string; submissionNotes?: string }> {
+	async getLineItemTaskInfo(submissionId: string): Promise<{ taskTitle: string; taskTypeName?: string; submissionNotes?: string }> {
+		const unavailable = { taskTitle: 'Task details unavailable' };
 		try {
-			const sub = await getEntityRecord('task_submission', submissionId);
+			const subResponse = await getEntityRecord('task_submission', submissionId);
+			const sub = subResponse.data;
 			const assignmentId = (sub as any)?.task_assignment_id;
-			if (!assignmentId) return { taskTitle: submissionId };
-			const assignment = await getEntityRecord('task_assignment', assignmentId);
+			if (!assignmentId) return unavailable;
+			const assignmentResponse = await getEntityRecord('task_assignment', assignmentId);
+			const assignment = assignmentResponse.data;
 			const taskId = (assignment as any)?.task_id;
-			if (!taskId) return { taskTitle: submissionId };
-			const task = await getEntityRecord('task', taskId);
+			if (!taskId) return unavailable;
+			const taskResponse = await getEntityRecord('task', taskId);
+			const task = taskResponse.data;
 			const taskTypeName = (task as any)?.task_type_id
-				? ((await getEntityRecord('task_type', (task as any).task_type_id)) as any)?.name
+				? (await getEntityRecord('task_type', (task as any).task_type_id)).data?.name
 				: undefined;
 			return {
-				taskTitle: (task as any)?.title ?? submissionId,
-				taskKey: (task as any)?.id,
+				taskTitle: (task as any)?.title ?? unavailable.taskTitle,
 				taskTypeName,
 				submissionNotes: (sub as any)?.notes,
 			};
 		} catch {
-			return { taskTitle: submissionId };
+			return unavailable;
 		}
 	},
 

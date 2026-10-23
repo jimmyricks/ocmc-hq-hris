@@ -5,7 +5,7 @@ export interface Workspace {
   color: string;
   timezone: string;
   is_active: boolean;
-  membership_role?: "member" | "supervisor" | null;
+  membership_role?: "supervisor" | null;
   is_home?: boolean;
   can_manage?: boolean;
 }

@@ -15,7 +15,7 @@
   }: HTMLAttributes<HTMLElement> & {
     children?: Snippet;
     align?: "start" | "center" | "end";
-    side?: string;
+    side?: "bottom" | "top";
     class?: string;
   } = $props();
   const menu = getContext<DropdownMenuContext>(DROPDOWN_MENU_CONTEXT);
@@ -25,7 +25,8 @@
   <div
     role="menu"
     class={cn(
-      "dropdown-content absolute top-[calc(100%+6px)] z-50 grid min-w-45 gap-0.5 rounded-lg border border-base-300 bg-base-100 p-1 shadow-md",
+      "dropdown-content absolute z-50 grid min-w-45 gap-0.5 rounded-lg border border-base-300 bg-base-100 p-1 shadow-md",
+      side === "top" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]",
       `dropdown-content--${align}`,
       className,
     )}

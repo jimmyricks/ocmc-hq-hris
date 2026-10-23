@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     EMAIL_FROM_NAME: str = "System Notifications"
     EMAIL_ENABLED: bool = True
 
+    BAHANDI_WORKSPACE_ID: str = "workspace-bahandi"
+    BAHANDI_PRESS_DRAFT_URL: Optional[str] = None
+    BAHANDI_PRESS_DRAFT_TOKEN: Optional[str] = None
+    BAHANDI_INTEGRATION_WORKER_TOKEN: Optional[str] = None
+    BAHANDI_HTTP_TIMEOUT_SECONDS: int = 10
+
     # Deep links in notification emails (no trailing slash)
     PUBLIC_APP_URL: str = "http://localhost:3000/"
 

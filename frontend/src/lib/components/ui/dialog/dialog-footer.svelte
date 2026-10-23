@@ -12,9 +12,6 @@
   } = $props();
 </script>
 
-<footer
-  class={cn("mt-4 flex flex-wrap justify-end gap-2", className)}
-  {...rest}
->
+<footer class={cn(" flex flex-wrap justify-end gap-2", className)} {...rest}>
   {@render children?.()}
 </footer>

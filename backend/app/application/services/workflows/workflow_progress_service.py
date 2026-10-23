@@ -23,12 +23,14 @@ class WorkflowProgressService:
         self.workflow_repo = workflow_repo
         self.entity_repo = entity_repo
 
-    async def get_progress(self, entity: str, record_id: str) -> dict[str, Any]:
+    async def get_progress(
+        self, entity: str, record_id: str, user: Any = None
+    ) -> dict[str, Any]:
         record = await self.entity_repo.get_by_id(entity, record_id)
         if not record:
             raise ValueError(f"Record '{record_id}' not found for entity '{entity}'")
 
-        node = await self._build_node(entity, record)
+        node = await self._build_node(entity, record, user)
         return {
             "entity": entity,
             "record_id": record_id,
@@ -37,18 +39,42 @@ class WorkflowProgressService:
             "node": node,
         }
 
-    async def _build_node(self, entity: str, record: Any) -> dict[str, Any]:
-        workflow_def = await self._get_workflow_definition(entity)
+    async def _build_node(self, entity: str, record: Any, user: Any = None) -> dict[str, Any]:
         record_id = getattr(record, "id", None)
+        workflow = await self.workflow_repo.get_workflow(
+            entity, workspace_id=getattr(record, "workspace_id", None)
+        )
+        workflow_def = self._workflow_definition(workflow, entity)
         title = self._get_record_title(entity, record)
         current_state = self._normalize_state(
-            getattr(record, "workflow_state", None) or workflow_def.get("initial_state")
+            self._record_state(entity, record) or workflow_def.get("initial_state")
         )
+        if workflow:
+            current_state = self.workflow_repo.resolve_state_slug(
+                workflow, current_state
+            )
+        allowed_actions = await self.workflow_repo.get_available_actions(
+            entity,
+            current_state,
+            user,
+            record_id,
+            workflow=workflow,
+            doc=record,
+        )
+        allowed_by_slug = {item["action_slug"]: item for item in allowed_actions}
         transitions_from_current = [
-            t for t in workflow_def["transitions"] if t["from_state"] == current_state
+            t
+            for t in workflow_def["transitions"]
+            if t["from_state"] == current_state and t["action"] in allowed_by_slug
         ]
         next_actions = [
             {
+                "action_slug": t["action"],
+                "action_label": t["action_label"],
+                "from_state": t["from_state"],
+                "to_state": t["to_state"],
+                "to_state_label": self._state_label(workflow_def, t["to_state"]),
+                "allowed_roles": t.get("allowed_roles", []),
                 "action": t["action"],
                 "label": t["action_label"],
                 "target_state": t["to_state"],
@@ -71,8 +97,17 @@ class WorkflowProgressService:
             "children": [],
         }
 
-    async def _get_workflow_definition(self, entity: str) -> dict[str, Any]:
-        workflow = await self.workflow_repo.get_workflow(entity)
+    def _record_state(self, entity: str, record: Any) -> Optional[str]:
+        meta = MetaRegistry.get(entity)
+        configured = getattr(getattr(meta, "workflow", None), "state_field", None)
+        for field_name in (configured, "workflow_state", "status"):
+            if field_name and hasattr(record, field_name):
+                value = getattr(record, field_name, None)
+                if value is not None:
+                    return str(value)
+        return None
+
+    def _workflow_definition(self, workflow: Any, entity: str) -> dict[str, Any]:
         if not workflow:
             return {
                 "name": entity,
@@ -104,6 +139,7 @@ class WorkflowProgressService:
                         "action_label": t.action_ref.label,
                         "from_state": sl.state.slug if sl.state else None,
                         "to_state": t.to_state_link.state.slug,
+                        "allowed_roles": t.get_allowed_roles(),
                     })
 
         return {
